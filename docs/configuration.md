@@ -233,7 +233,7 @@ wrangler d1 execute CF_D1_DATABASE_NAME_REMOVED --remote --file=migrations/0001_
 6. 执行 D1 migration
 7. 配置 X App Redirect URI
 8. 配置 Worker Secrets
-9. `npm run check`
+9. `npm run build`
 10. `npm run dev`
 11. 用隧道地址联调 `/auth/callback` 和 `/webhook`
 12. `npm run deploy`
@@ -252,7 +252,33 @@ wrangler d1 execute CF_D1_DATABASE_NAME_REMOVED --remote --file=migrations/0001_
 - `/login` 生成的授权链接会回调失败
 - Telegram webhook 会打到错误地址
 
-## 13. 生产前检查
+## 13. `package.json` 自动执行的初始化
+
+当前脚本约定如下：
+
+```bash
+npm run build
+```
+
+会自动执行：
+
+1. `wrangler types`
+2. `tsc --noEmit`
+3. 本地 D1 初始化：
+   `wrangler d1 execute CF_D1_DATABASE_NAME_REMOVED --local --file=migrations/0001_init.sql`
+
+```bash
+npm run deploy
+```
+
+会自动执行：
+
+1. `npm run build`
+2. 远程 D1 初始化：
+   `wrangler d1 execute CF_D1_DATABASE_NAME_REMOVED --remote --file=migrations/0001_init.sql`
+3. `wrangler deploy`
+
+## 14. 生产前检查
 
 部署前确认：
 
@@ -265,7 +291,7 @@ wrangler d1 execute CF_D1_DATABASE_NAME_REMOVED --remote --file=migrations/0001_
 - Telegram webhook 已指向线上 `/webhook`
 - `ADMIN_CHAT_ID` 已配置
 
-## 14. 运维建议
+## 15. 运维建议
 
 至少定期检查这些内容：
 

@@ -8,14 +8,14 @@ crons = ["*/5 * * * *"]
 
 [[kv_namespaces]]
 binding = "KV"
-id = "<KV_ID>"
-preview_id = "<KV_PREVIEW_ID>"
+id = "CF_KV_ID_REMOVED"
+preview_id = "CF_KV_ID_REMOVED"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "CF_D1_DATABASE_NAME_REMOVED"
-database_id = "<D1_ID>"
-preview_database_id = "<D1_PREVIEW_ID>"
+database_id = "CF_D1_DATABASE_ID_REMOVED"
+preview_database_id = "CF_D1_DATABASE_ID_REMOVED"
 
 [[r2_buckets]]
 binding = "R2"
@@ -23,8 +23,8 @@ bucket_name = "CF_R2_BUCKET_NAME_REMOVED"
 
 [vars]
 WORKERS_PAID_ENABLED = "false"
-R2_PUBLIC_DOMAIN = ""
-APP_BASE_URL = "http://localhost:8787"
+R2_PUBLIC_DOMAIN = "CF_R2_PUBLIC_DOMAIN_REMOVED"
+APP_BASE_URL = "https://CF_APP_BASE_URL_REMOVED"
 
 [observability.logs]
 enabled = true

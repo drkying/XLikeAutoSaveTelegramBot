@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "wrangler dev",
     "dev:scheduled": "wrangler dev --test-scheduled",
-    "deploy": "wrangler deploy",
+    "db:init:local": "wrangler d1 execute CF_D1_DATABASE_NAME_REMOVED --local --file=migrations/0001_init.sql",
+    "db:init:remote": "wrangler d1 execute CF_D1_DATABASE_NAME_REMOVED --remote --file=migrations/0001_init.sql",
+    "build": "npm run cf-typegen && npm run check && npm run db:init:local",
+    "deploy": "npm run build && npm run db:init:remote && wrangler deploy",
     "check": "tsc --noEmit",
     "cf-typegen": "wrangler types"
   },

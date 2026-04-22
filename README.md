@@ -45,11 +45,12 @@ wrangler d1 execute CF_D1_DATABASE_NAME_REMOVED --remote --file=migrations/0001_
 ## 本地开发
 
 ```bash
-npm run check
+npm run build
 npm run dev
 npm run dev:scheduled
 ```
 
+- `npm run build` 会先生成 Workers 类型、执行 TypeScript 检查，并初始化本地 D1。
 - `npm run dev` 用于本地 HTTP / Bot 调试。
 - `npm run dev:scheduled` 用于手动触发 Cron 路径。
 - 需要测试 OAuth 或 Telegram webhook 时，先把本地服务通过 ngrok / cloudflared 等工具暴露出去，再同步更新：
@@ -67,6 +68,8 @@ wrangler secret put ADMIN_CHAT_ID
 wrangler secret put WEBHOOK_SECRET
 npm run deploy
 ```
+
+- `npm run deploy` 会自动先执行 `npm run build`，再执行远程 D1 初始化，然后才真正部署。
 
 部署后设置并校验 Telegram webhook；如果没有启用 `WEBHOOK_SECRET`，去掉 `secret_token` 参数：
 
