@@ -39,6 +39,26 @@ async function saveCredentials(
   await clearSetupState(deps.env, chatId);
 }
 
+async function saveAccountCredentials(
+  deps: CommandDependencies,
+  chatId: number,
+  accountId: string,
+  clientId: string,
+  clientSecret: string,
+): Promise<string> {
+  const account = await deps.db.getAccount(accountId);
+  if (!account || account.telegram_chat_id !== chatId) {
+    throw new Error("Target account was not found.");
+  }
+
+  await deps.db.updateAccount(accountId, {
+    x_client_id: clientId,
+    x_client_secret: clientSecret,
+  });
+  await clearSetupState(deps.env, chatId);
+  return account.username;
+}
+
 export function registerSetupCommand(bot: Bot, deps: CommandDependencies): void {
   bot.command("setup", async (ctx) => {
     const chatId = getChatId(ctx);
@@ -53,14 +73,39 @@ export function registerSetupCommand(bot: Bot, deps: CommandDependencies): void 
       return;
     }
 
+    if (args.length >= 3) {
+      try {
+        const username = await saveAccountCredentials(deps, chatId, args[0], args[1], args[2]);
+        await ctx.reply(`API credentials saved for @${username}. Run /login ${args[0]} when this account needs re-authorization.`);
+      } catch (error) {
+        await ctx.reply(error instanceof Error ? error.message : "Unable to save account credentials.");
+      }
+      return;
+    }
+
     if (args.length >= 2) {
       await saveCredentials(deps, chatId, args[0], args[1]);
-      await ctx.reply("X client credentials saved. Run /login to connect an X account.");
+      await ctx.reply("Default X client credentials saved. Run /login to connect a new X account.");
+      return;
+    }
+
+    if (args.length === 1) {
+      const account = await deps.db.getAccount(args[0]);
+      if (!account || account.telegram_chat_id !== chatId) {
+        await ctx.reply("Usage: /setup [account_id] [client_id client_secret]");
+        return;
+      }
+
+      await setSetupState(deps.env, chatId, {
+        step: "client_id",
+        target_account_id: account.account_id,
+      });
+      await ctx.reply(`Send the X Client ID for @${account.username} in the next message. Use /setup cancel to stop.`);
       return;
     }
 
     await setSetupState(deps.env, chatId, { step: "client_id" });
-    await ctx.reply("Send your X Client ID in the next message. Use /setup cancel to stop.");
+    await ctx.reply("Send your default X Client ID in the next message. Use /setup cancel to stop.");
   });
 }
 
@@ -83,8 +128,9 @@ export async function handleSetupConversation(
     await setSetupState(deps.env, chatId, {
       step: "client_secret",
       client_id: text,
+      target_account_id: state.target_account_id ?? null,
     });
-    await ctx.reply("Client ID saved. Now send your X Client Secret, then delete that chat message afterwards.");
+    await ctx.reply("Client ID saved. Now send the X Client Secret, then delete that chat message afterwards.");
     return true;
   }
 
@@ -94,7 +140,18 @@ export async function handleSetupConversation(
     return true;
   }
 
+  if (state.target_account_id) {
+    try {
+      const username = await saveAccountCredentials(deps, chatId, state.target_account_id, state.client_id, text);
+      await ctx.reply(`API credentials saved for @${username}. Run /login ${state.target_account_id} if this account needs fresh authorization.`);
+    } catch (error) {
+      await clearSetupState(deps.env, chatId);
+      await ctx.reply(error instanceof Error ? error.message : "Unable to save account credentials.");
+    }
+    return true;
+  }
+
   await saveCredentials(deps, chatId, state.client_id, text);
-  await ctx.reply("X client credentials saved. Run /login to connect an account.");
+  await ctx.reply("Default X client credentials saved. Run /login to connect an account.");
   return true;
 }

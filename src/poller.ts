@@ -1,11 +1,20 @@
 import { createDatabase } from "./db";
 import { KVStore } from "./kv-store";
-import { processMediaItem } from "./media-handler";
+import { ensureMediaStoredInR2, processMediaItem } from "./media-handler";
 import { createCorrelationId, logError, logInfo, logWarn, serializeError } from "./observability";
-import { extractMedia, tweetToMarkdown } from "./processor";
+import { buildTweetFallbackMarkdown, extractMedia, tweetToMarkdown } from "./processor";
 import { notifyAdmin, notifyUser, sendTweetMessage } from "./sender";
 import { ensureValidToken, getLikedTweets, XApiError } from "./twitter-api";
-import type { AccountData, Env, MediaRecord, TweetAuthor, TweetRecord, UserData, XTweet } from "./types";
+import type {
+  AccountData,
+  Env,
+  MediaRecord,
+  MediaStorageStatus,
+  TweetAuthor,
+  TweetRecord,
+  UserData,
+  XTweet,
+} from "./types";
 
 function currentUtcHour(now = new Date()): number {
   return now.getUTCHours();
@@ -45,6 +54,41 @@ function getTweetAuthor(tweet: XTweet, includes: Awaited<ReturnType<typeof getLi
   };
 }
 
+function shouldSendViaR2Fallback(media: MediaRecord): boolean {
+  return !media.telegram_file_id && Boolean(media.r2_public_url);
+}
+
+function shouldSendViaTelegram(media: MediaRecord): boolean {
+  if (shouldSendViaR2Fallback(media)) {
+    return false;
+  }
+
+  return Boolean(media.telegram_file_id ?? media.x_original_url ?? media.r2_public_url);
+}
+
+function resolvePersistedMediaStatus(
+  media: MediaRecord,
+  telegramFileId: string | null | undefined,
+): MediaStorageStatus {
+  if (telegramFileId) {
+    return "telegram";
+  }
+
+  if (media.r2_key ?? media.r2_public_url) {
+    return "r2";
+  }
+
+  if (media.storage_status === "failed") {
+    return "failed";
+  }
+
+  if (media.x_original_url) {
+    return "x_only";
+  }
+
+  return "failed";
+}
+
 async function persistTweetMedia(
   env: Env,
   account: AccountData,
@@ -52,16 +96,79 @@ async function persistTweetMedia(
   mediaItems: MediaRecord[],
 ): Promise<void> {
   const db = createDatabase(env);
+  const preparedMedia: MediaRecord[] = [];
+  for (const media of mediaItems) {
+    preparedMedia.push(await processMediaItem(env, media, {
+      accountId: account.account_id,
+      onlyWhenExceedsTelegramLimit: true,
+    }));
+  }
 
-  let sentResults: Array<{ mediaId?: number; fileId?: string | null }> = [];
+  const preparedMediaById = new Map<number, MediaRecord>();
+  for (const media of preparedMedia) {
+    if (media.id) {
+      preparedMediaById.set(media.id, media);
+    }
+  }
+
+  const fallbackMedia = preparedMedia.filter((media) => shouldSendViaR2Fallback(media));
+  const telegramMedia = preparedMedia.filter((media) => shouldSendViaTelegram(media));
+  const shouldDeferTweetText = fallbackMedia.length > 0 || telegramMedia.some((media) => !media.telegram_file_id);
+  let sentResults: Array<{
+    mediaId?: number;
+    fileId?: string | null;
+    filePath?: string | null;
+    fileUrl?: string | null;
+  }> = [];
+  let sentFallbackMessage = false;
+  let sentPlainMessage = false;
   try {
-    sentResults = await sendTweetMessage(env, account.telegram_chat_id, tweet.text_markdown ?? "", mediaItems);
+    const allFallbackMedia = [...fallbackMedia];
+    if (telegramMedia.length > 0) {
+      const sendResult = await sendTweetMessage(
+        env,
+        account.telegram_chat_id,
+        shouldDeferTweetText ? undefined : tweet.text_markdown ?? "",
+        telegramMedia,
+      );
+      sentResults = sendResult.sentResults;
+
+      for (const media of sendResult.fallbackMedia) {
+        const uploadedMedia = await ensureMediaStoredInR2(env, media, {
+          accountId: account.account_id,
+        });
+        allFallbackMedia.push(uploadedMedia);
+        if (uploadedMedia.id) {
+          preparedMediaById.set(uploadedMedia.id, uploadedMedia);
+        }
+      }
+    }
+
+    const sendableFallbackMedia = allFallbackMedia.filter((media) => shouldSendViaR2Fallback(media));
+    if (sendableFallbackMedia.length > 0) {
+      await sendTweetMessage(
+        env,
+        account.telegram_chat_id,
+        buildTweetFallbackMarkdown(tweet.text_markdown ?? "", sendableFallbackMedia),
+        [],
+      );
+      sentFallbackMessage = true;
+    } else if (shouldDeferTweetText || telegramMedia.length === 0) {
+      await sendTweetMessage(env, account.telegram_chat_id, tweet.text_markdown ?? "", []);
+      sentPlainMessage = true;
+    }
+
     logInfo("poller.telegram_send.completed", {
       account_id: account.account_id,
       username: account.username,
       tweet_id: tweet.tweet_id,
-      media_count: mediaItems.length,
+      media_count: preparedMedia.length,
+      telegram_media_count: telegramMedia.length,
+      fallback_media_count: sendableFallbackMedia.length,
+      deferred_tweet_text: shouldDeferTweetText,
       sent_result_count: sentResults.length,
+      sent_fallback_message: sentFallbackMessage,
+      sent_plain_message: sentPlainMessage,
     });
   } catch (error) {
     logError("poller.telegram_send.failed", {
@@ -78,67 +185,52 @@ async function persistTweetMedia(
     );
   }
 
+  const sentResultsByMediaId = new Map<number, {
+    fileId: string | null;
+    filePath?: string | null;
+    fileUrl?: string | null;
+  }>();
   for (const result of sentResults) {
-    if (result.mediaId && result.fileId) {
-      await db.updateMediaStatus(result.mediaId, {
-        telegram_file_id: result.fileId,
-        storage_status: "telegram",
+    if (result.mediaId) {
+      sentResultsByMediaId.set(result.mediaId, {
+        fileId: result.fileId ?? null,
+        filePath: result.filePath ?? null,
+        fileUrl: result.fileUrl ?? null,
       });
     }
   }
 
-  for (const media of mediaItems) {
-    const latest = media.id ? await db.getMediaById(media.id) : media;
-    if (!latest) {
+  const finalPreparedMedia = preparedMedia.map((media) => (
+    media.id ? preparedMediaById.get(media.id) ?? media : media
+  ));
+
+  for (const media of finalPreparedMedia) {
+    if (!media.id) {
       continue;
     }
 
-    const r2Patch = await processMediaItem(env, latest, {
-      accountId: account.account_id,
-    });
-    if (latest.telegram_file_id || sentResults.find((item) => item.mediaId === latest.id && item.fileId)) {
-      await db.updateMediaStatus(latest.id as number, {
-        r2_key: r2Patch.r2_key,
-        r2_public_url: r2Patch.r2_public_url,
-        file_size_bytes: r2Patch.file_size_bytes,
-        content_type: r2Patch.content_type,
-        storage_status: "telegram",
-      });
-      continue;
-    }
-
-    await db.updateMediaStatus(latest.id as number, {
-      r2_key: r2Patch.r2_key,
-      r2_public_url: r2Patch.r2_public_url,
-      file_size_bytes: r2Patch.file_size_bytes,
-      content_type: r2Patch.content_type,
-      storage_status: r2Patch.storage_status,
+    const sentResult = sentResultsByMediaId.get(media.id);
+    const telegramFileId = sentResult?.fileId ?? media.telegram_file_id ?? undefined;
+    await db.updateMediaStatus(media.id, {
+      telegram_file_id: telegramFileId,
+      telegram_file_path: sentResult?.filePath ?? media.telegram_file_path,
+      telegram_file_url: sentResult?.fileUrl ?? media.telegram_file_url,
+      r2_key: media.r2_key,
+      r2_public_url: media.r2_public_url,
+      file_size_bytes: media.file_size_bytes,
+      content_type: media.content_type,
+      storage_status: resolvePersistedMediaStatus(media, telegramFileId),
     });
   }
 
-  const latestMedia = await Promise.all(
-    mediaItems
-      .filter((media) => Boolean(media.id))
-      .map((media) => db.getMediaById(media.id as number)),
-  );
-  const fallbackLinks = latestMedia
-    .filter((media): media is MediaRecord => Boolean(media))
-    .filter((media) => !media.telegram_file_id)
-    .map((media) => media.r2_public_url ?? media.x_original_url)
-    .filter((value): value is string => Boolean(value));
-
-  if (fallbackLinks.length > 0) {
+  const finalFallbackCount = finalPreparedMedia.filter((media) => shouldSendViaR2Fallback(media)).length;
+  if (finalFallbackCount > 0) {
     logWarn("poller.media_fallback_links", {
       account_id: account.account_id,
       username: account.username,
       tweet_id: tweet.tweet_id,
-      fallback_count: fallbackLinks.length,
+      fallback_count: finalFallbackCount,
     });
-    await notifyUser(
-      env,
-      account.telegram_chat_id,
-      `Media fallback links for tweet ${tweet.tweet_url}\n${fallbackLinks.join("\n")}`,
-    );
   }
 }
 
@@ -199,15 +291,17 @@ async function handleTweet(
 
 async function getAuthorizedAccount(env: Env, account: AccountData): Promise<{
   account: AccountData;
-  user: UserData;
+  user?: UserData;
 }> {
   const db = createDatabase(env);
-  const user = await db.getUser(account.telegram_chat_id);
-  if (!user) {
-    throw new Error(`Missing user credentials for chat ${account.telegram_chat_id}`);
+  const user = (!account.x_client_id || !account.x_client_secret)
+    ? (await db.getUser(account.telegram_chat_id)) ?? undefined
+    : undefined;
+  if ((!account.x_client_id || !account.x_client_secret) && !user) {
+    throw new Error(`Missing X API credentials for account ${account.account_id}`);
   }
 
-  const authorizedAccount = await ensureValidToken(account, user, db);
+  const authorizedAccount = await ensureValidToken(account, db, user);
   return {
     account: authorizedAccount,
     user,
@@ -237,14 +331,15 @@ export async function pollAccount(env: Env, account: AccountData): Promise<void>
     });
     const { account: authorizedAccount, user } = await getAuthorizedAccount(env, account);
     const response = await getLikedTweets(authorizedAccount.account_id, authorizedAccount.access_token, {
-      sinceId: authorizedAccount.last_tweet_id,
       maxResults: 100,
       account: authorizedAccount,
       user,
       db,
     });
 
-    const tweets = [...(response.data ?? [])].reverse();
+    const fetchedTweets = response.data ?? [];
+    const existingTweetIds = await db.getExistingTweetIds(fetchedTweets.map((tweet) => tweet.id));
+    const tweets = fetchedTweets.filter((tweet) => !existingTweetIds.has(tweet.id)).reverse();
     for (const tweet of tweets) {
       await handleTweet(env, authorizedAccount, tweet, response.includes);
     }

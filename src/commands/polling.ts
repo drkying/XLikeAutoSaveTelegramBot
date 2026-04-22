@@ -1,21 +1,19 @@
 import type { Bot } from "grammy";
 import type { CommandDependencies } from "./helpers";
-import { formatAccountSummary, getChatId, getCommandArgs } from "./helpers";
-
-function parseHours(value: string): { start: number; end: number } | null {
-  const match = value.match(/^(\d{1,2})-(\d{1,2})$/);
-  if (!match) {
-    return null;
-  }
-
-  const start = Number(match[1]);
-  const end = Number(match[2]);
-  if (Number.isNaN(start) || Number.isNaN(end) || start < 0 || start > 23 || end < 1 || end > 24 || start >= end) {
-    return null;
-  }
-
-  return { start, end };
-}
+import {
+  MIN_POLL_INTERVAL_MINUTES,
+  getChatId,
+  getCommandArgs,
+  getOwnedAccount,
+  parseHoursRange,
+} from "./helpers";
+import {
+  buildMainMenuKeyboard,
+  buildPollingAccountKeyboard,
+  buildPollingAccountMessage,
+  buildPollingDashboardMessage,
+  buildPollingListKeyboard,
+} from "./ui";
 
 export function registerPollingCommand(bot: Bot, deps: CommandDependencies): void {
   bot.command("polling", async (ctx) => {
@@ -28,38 +26,58 @@ export function registerPollingCommand(bot: Bot, deps: CommandDependencies): voi
     if (action === "list") {
       const accounts = await deps.db.listAccountsByUser(chatId);
       if (accounts.length === 0) {
-        await ctx.reply("No connected X accounts. Run /login first.");
+        await ctx.reply("No connected X accounts. Run /login first.", {
+          reply_markup: buildMainMenuKeyboard(),
+        });
         return;
       }
-      await ctx.reply(["Polling configuration:", ...accounts.map(formatAccountSummary)].join("\n"));
+      await ctx.reply(buildPollingDashboardMessage(accounts), {
+        reply_markup: buildPollingListKeyboard(accounts),
+      });
       return;
     }
 
     if (!accountId) {
-      await ctx.reply("Usage: /polling <list|on|off|interval|hours> ...");
+      await ctx.reply("Usage: /polling <list|on|off|interval|hours> ...\nRun /polling to open the visual settings menu.");
       return;
     }
 
-    const account = await deps.db.getAccount(accountId);
-    if (!account || account.telegram_chat_id !== chatId) {
+    const account = await getOwnedAccount(deps, chatId, accountId);
+    if (!account) {
       await ctx.reply("Account not found.");
       return;
     }
 
     if (action === "on" || action === "off") {
       await deps.db.setAccountActive(accountId, action === "on");
-      await ctx.reply(`Polling ${action === "on" ? "enabled" : "disabled"} for @${account.username}.`);
+      const updated = await deps.db.getAccount(accountId);
+      if (!updated) {
+        await ctx.reply("Account not found.");
+        return;
+      }
+      await ctx.reply(buildPollingAccountMessage(updated), {
+        reply_markup: buildPollingAccountKeyboard(updated),
+      });
       return;
     }
 
     if (action === "interval") {
       const minutes = Number(value);
-      if (!Number.isSafeInteger(minutes) || minutes < 5) {
-        await ctx.reply("Usage: /polling interval <account_id> <minutes>, minimum 5.");
+      if (!Number.isSafeInteger(minutes) || minutes < MIN_POLL_INTERVAL_MINUTES) {
+        await ctx.reply(
+          `Usage: /polling interval <account_id> <minutes>, minimum ${MIN_POLL_INTERVAL_MINUTES}.`,
+        );
         return;
       }
       await deps.db.updateAccount(accountId, { poll_interval_min: minutes });
-      await ctx.reply(`Polling interval updated to ${minutes} minutes for @${account.username}.`);
+      const updated = await deps.db.getAccount(accountId);
+      if (!updated) {
+        await ctx.reply("Account not found.");
+        return;
+      }
+      await ctx.reply(buildPollingAccountMessage(updated), {
+        reply_markup: buildPollingAccountKeyboard(updated),
+      });
       return;
     }
 
@@ -68,7 +86,7 @@ export function registerPollingCommand(bot: Bot, deps: CommandDependencies): voi
         await ctx.reply("Usage: /polling hours <account_id> <start-end>");
         return;
       }
-      const hours = parseHours(value);
+      const hours = parseHoursRange(value);
       if (!hours) {
         await ctx.reply("Invalid hours. Example: /polling hours 12345 8-22");
         return;
@@ -78,7 +96,14 @@ export function registerPollingCommand(bot: Bot, deps: CommandDependencies): voi
         poll_start_hour: hours.start,
         poll_end_hour: hours.end,
       });
-      await ctx.reply(`Polling hours updated to ${hours.start}-${hours.end} UTC for @${account.username}.`);
+      const updated = await deps.db.getAccount(accountId);
+      if (!updated) {
+        await ctx.reply("Account not found.");
+        return;
+      }
+      await ctx.reply(buildPollingAccountMessage(updated), {
+        reply_markup: buildPollingAccountKeyboard(updated),
+      });
       return;
     }
 

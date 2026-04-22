@@ -36,6 +36,8 @@ async function convertMedia(
       if (sent.fileId) {
         latest = (await deps.db.updateMediaStatus(mediaId, {
           telegram_file_id: sent.fileId,
+          telegram_file_path: sent.filePath ?? null,
+          telegram_file_url: sent.fileUrl ?? null,
           storage_status: "telegram",
         })) as MediaRecord;
       }
@@ -51,8 +53,12 @@ async function convertMedia(
 
   const patch = await processMediaItem(deps.env, latest, {
     accountId: tweet.account_id,
+    onlyWhenExceedsTelegramLimit: true,
   });
   const saved = await deps.db.updateMediaStatus(mediaId, {
+    telegram_file_id: latest.telegram_file_id,
+    telegram_file_path: latest.telegram_file_path,
+    telegram_file_url: latest.telegram_file_url,
     r2_key: patch.r2_key,
     r2_public_url: patch.r2_public_url,
     file_size_bytes: patch.file_size_bytes,

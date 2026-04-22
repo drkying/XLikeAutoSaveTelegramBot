@@ -46,27 +46,75 @@ function htmlPage(title: string, message: string): string {
 </html>`;
 }
 
-export async function createAuthLink(env: Env, telegramChatId: number): Promise<string> {
-  const db = createDatabase(env);
-  const kv = new KVStore(env);
-  const user = await db.getUser(telegramChatId);
+interface AuthCredentialContext {
+  clientId: string;
+  clientSecret: string;
+  expectedAccountId?: string | null;
+}
 
+async function resolveAuthCredentialContext(
+  db: Database,
+  telegramChatId: number,
+  targetAccountId?: string,
+): Promise<AuthCredentialContext> {
+  if (targetAccountId) {
+    const account = await db.getAccount(targetAccountId);
+    if (!account || account.telegram_chat_id !== telegramChatId) {
+      throw new Error("Target X account was not found.");
+    }
+
+    const fallbackUser = (!account.x_client_id || !account.x_client_secret)
+      ? await db.getUser(telegramChatId)
+      : null;
+    const clientId = account.x_client_id ?? fallbackUser?.x_client_id;
+    const clientSecret = account.x_client_secret ?? fallbackUser?.x_client_secret;
+    if (!clientId || !clientSecret) {
+      throw new Error(`X account @${account.username} has no saved API credentials. Run /setup ${account.account_id}.`);
+    }
+
+    return {
+      clientId,
+      clientSecret,
+      expectedAccountId: account.account_id,
+    };
+  }
+
+  const user = await db.getUser(telegramChatId);
   if (!user) {
     throw new Error("User has not completed /setup yet.");
   }
+
+  return {
+    clientId: user.x_client_id,
+    clientSecret: user.x_client_secret,
+    expectedAccountId: null,
+  };
+}
+
+export async function createAuthLink(
+  env: Env,
+  telegramChatId: number,
+  options: { accountId?: string } = {},
+): Promise<string> {
+  const db = createDatabase(env);
+  const kv = new KVStore(env);
+  const authContext = await resolveAuthCredentialContext(db, telegramChatId, options.accountId);
 
   const pkce = await generatePKCE();
   const state = crypto.randomUUID();
   const authState: AuthState = {
     code_verifier: pkce.codeVerifier,
     telegram_chat_id: telegramChatId,
+    x_client_id: authContext.clientId,
+    x_client_secret: authContext.clientSecret,
+    expected_account_id: authContext.expectedAccountId ?? null,
     created_at: new Date().toISOString(),
   };
 
   await kv.setAuthState(state, authState, 600);
 
   return buildAuthUrl(
-    user.x_client_id,
+    authContext.clientId,
     getCallbackUrl(env),
     state,
     pkce.codeChallenge,
@@ -79,20 +127,18 @@ async function completeAuthCallback(
   authState: AuthState,
   code: string,
 ): Promise<{ username: string; accountId: string }> {
-  const user = await db.getUser(authState.telegram_chat_id);
-  if (!user) {
-    throw new Error("User credentials no longer exist.");
-  }
-
   const token = await exchangeCodeForToken({
     code,
     codeVerifier: authState.code_verifier,
     redirectUri: getCallbackUrl(env),
-    clientId: user.x_client_id,
-    clientSecret: user.x_client_secret,
+    clientId: authState.x_client_id,
+    clientSecret: authState.x_client_secret,
   });
 
   const me = await getUserMe(token.access_token);
+  if (authState.expected_account_id && authState.expected_account_id !== me.id) {
+    throw new Error(`Authenticated X account @${me.username} does not match the requested account.`);
+  }
   const expiresAt = Math.floor(Date.now() / 1000) + token.expires_in;
 
   await db.upsertAccount({
@@ -100,6 +146,8 @@ async function completeAuthCallback(
     telegram_chat_id: authState.telegram_chat_id,
     username: me.username,
     display_name: me.name,
+    x_client_id: authState.x_client_id,
+    x_client_secret: authState.x_client_secret,
     access_token: token.access_token,
     refresh_token: token.refresh_token ?? "",
     token_expires_at: expiresAt,
@@ -120,6 +168,7 @@ async function completeAuthCallback(
 export async function handleAuthLogin(c: AuthHonoContext): Promise<Response> {
   const requestId = c.get("requestId");
   const chatIdRaw = c.req.query("chat_id");
+  const accountId = c.req.query("account_id") ?? undefined;
   if (!chatIdRaw) {
     logInfo("auth.login.invalid_request", {
       request_id: requestId,
@@ -139,16 +188,18 @@ export async function handleAuthLogin(c: AuthHonoContext): Promise<Response> {
   }
 
   try {
-    const authUrl = await createAuthLink(c.env, chatId);
+    const authUrl = await createAuthLink(c.env, chatId, { accountId });
     logInfo("auth.login.created", {
       request_id: requestId,
       chat_id: chatId,
+      account_id: accountId ?? null,
     });
     return c.redirect(authUrl, 302);
   } catch (error) {
     logError("auth.login.failed", {
       request_id: requestId,
       chat_id: chatId,
+      account_id: accountId ?? null,
       ...serializeError(error),
     });
     const message = error instanceof Error ? error.message : "Unable to create auth link.";

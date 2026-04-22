@@ -62,6 +62,24 @@ export function tweetToMarkdown(tweet: XTweet, includes?: XIncludes): string {
   ].join("\n");
 }
 
+export function buildTweetFallbackMarkdown(markdown: string, mediaItems: MediaRecord[]): string {
+  const mediaLinks = mediaItems
+    .map((media, index) => buildR2FallbackLink(media, index))
+    .filter((value): value is string => Boolean(value));
+
+  if (mediaLinks.length === 0) {
+    return markdown;
+  }
+
+  const { head, body, tail } = splitTweetMarkdown(markdown);
+  const replacement = replaceTrailingBodyUrls(body, mediaLinks);
+  const finalBody = replacement.remainingLinks.length === 0
+    ? replacement.body
+    : appendFallbackLinksToBody(replacement.body, replacement.remainingLinks);
+
+  return [head, finalBody, tail].filter((part) => part.length > 0).join("\n\n");
+}
+
 export function extractMedia(tweet: XTweet, includes?: XIncludes): MediaRecord[] {
   const mediaKeys = tweet.attachments?.media_keys ?? [];
   const mediaMap = new Map<string, XMedia>(
@@ -121,8 +139,7 @@ function resolveMediaSource(
   }
 
   const selectedVariant = selectBestVariant(media.type, media.variants);
-  const fallbackUrl = media.preview_image_url;
-  const url = selectedVariant?.url ?? fallbackUrl;
+  const url = selectedVariant?.url;
 
   return {
     url,
@@ -178,6 +195,111 @@ function formatTweetTimestamp(value?: string): string {
 
 function escapeMarkdownLinkUrl(url: string): string {
   return url.replace(/\\/g, "\\\\").replace(/\)/g, "\\)");
+}
+
+function getMediaLinkLabel(media: MediaRecord, index: number): string {
+  const labelByType: Record<MediaRecord["media_type"], string> = {
+    photo: "图片",
+    video: "视频",
+    animated_gif: "动图",
+  };
+
+  return `${labelByType[media.media_type]} ${index + 1}`;
+}
+
+function getMediaLinkPrefix(mediaType: MediaRecord["media_type"]): string {
+  switch (mediaType) {
+    case "photo":
+      return "🖼";
+    case "animated_gif":
+      return "🎞";
+    case "video":
+    default:
+      return "🎬";
+  }
+}
+
+function buildR2FallbackLink(media: MediaRecord, index: number): string | null {
+  if (!media.r2_public_url) {
+    return null;
+  }
+
+  return `${getMediaLinkPrefix(media.media_type)} [${escapeMarkdownV2(`${getMediaLinkLabel(media, index)} R2 文件`)}](${escapeMarkdownLinkUrl(media.r2_public_url)})`;
+}
+
+function splitTweetMarkdown(markdown: string): { head: string; body: string; tail: string } {
+  const sections = markdown.split("\n\n");
+  if (sections.length === 0) {
+    return {
+      head: "",
+      body: "",
+      tail: "",
+    };
+  }
+
+  const tail = sections[sections.length - 1]?.startsWith("🔗 [查看原推]") ? sections.pop() ?? "" : "";
+  const head = sections.shift() ?? "";
+  const body = sections.join("\n\n");
+
+  return {
+    head,
+    body,
+    tail,
+  };
+}
+
+function replaceTrailingBodyUrls(
+  body: string,
+  mediaLinks: string[],
+): { body: string; remainingLinks: string[] } {
+  if (!body) {
+    return {
+      body,
+      remainingLinks: [...mediaLinks],
+    };
+  }
+
+  const matches = [...body.matchAll(/https?:\/\/(?:\\.|[^\s])+/g)];
+  if (matches.length === 0) {
+    return {
+      body,
+      remainingLinks: [...mediaLinks],
+    };
+  }
+
+  const remainingLinks = [...mediaLinks];
+  const selectedMatches = matches.slice(-remainingLinks.length);
+  let cursor = body.length;
+  const output: string[] = [];
+
+  for (let index = selectedMatches.length - 1; index >= 0; index -= 1) {
+    const match = selectedMatches[index];
+    const replacement = remainingLinks.pop();
+    if (!replacement || match.index === undefined) {
+      continue;
+    }
+
+    const matchStart = match.index;
+    const matchEnd = match.index + match[0].length;
+    output.unshift(body.slice(matchEnd, cursor));
+    output.unshift(replacement);
+    cursor = matchStart;
+  }
+
+  output.unshift(body.slice(0, cursor));
+  return {
+    body: output.join(""),
+    remainingLinks,
+  };
+}
+
+function appendFallbackLinksToBody(body: string, mediaLinks: string[]): string {
+  const trimmedBody = body.trim();
+  if (!trimmedBody || trimmedBody === "无正文") {
+    return mediaLinks.join("\n");
+  }
+
+  return [body, ...mediaLinks].join("\n");
 }
 
 function inferContentTypeFromUrl(

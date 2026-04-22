@@ -1,10 +1,16 @@
 import type { Env, MediaRecord } from "./types";
+import { TELEGRAM_MEDIA_SIZE_LIMIT_BYTES } from "./media-handler";
 import { logInfo, logWarn, serializeError } from "./observability";
 
 interface TelegramApiResponse<T> {
   ok: boolean;
   result?: T;
   description?: string;
+}
+
+interface TelegramFile {
+  file_id: string;
+  file_path?: string;
 }
 
 interface TelegramPhotoSize {
@@ -29,11 +35,28 @@ interface TelegramMessage {
 export interface SentMediaResult {
   mediaId?: number;
   fileId?: string | null;
+  filePath?: string | null;
+  fileUrl?: string | null;
+}
+
+export interface SendTweetMessageResult {
+  sentResults: SentMediaResult[];
+  fallbackMedia: MediaRecord[];
+}
+
+export class TelegramMediaSendError extends Error {
+  constructor(
+    readonly media: MediaRecord,
+    message: string,
+    readonly needsR2Fallback = false,
+    readonly cause?: unknown,
+  ) {
+    super(message);
+    this.name = "TelegramMediaSendError";
+  }
 }
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
-const TELEGRAM_URL_VIDEO_LIMIT_BYTES = 50 * 1024 * 1024;
-const MULTIPART_CHUNK_SEPARATOR = "\r\n";
 
 function telegramApiUrl(env: Env, method: string): string {
   return `${TELEGRAM_API_BASE}/bot${env.TELEGRAM_BOT_TOKEN}/${method}`;
@@ -44,44 +67,11 @@ function wait(milliseconds: number): Promise<void> {
 }
 
 function getPreferredMediaSource(media: MediaRecord): string | null {
-  return media.telegram_file_id ?? media.r2_public_url ?? media.x_original_url ?? null;
+  return media.telegram_file_id ?? media.x_original_url ?? media.r2_public_url ?? null;
 }
 
 function isHttpUrl(value: string): boolean {
   return value.startsWith("http://") || value.startsWith("https://");
-}
-
-function safeFilenameFromUrl(url: string, fallback: string): string {
-  try {
-    const pathname = new URL(url).pathname;
-    const last = pathname.split("/").pop();
-    if (last) {
-      return last.replace(/[^A-Za-z0-9._-]+/g, "_");
-    }
-  } catch {
-    // Ignore malformed URLs and fall back to a generated name.
-  }
-
-  return fallback;
-}
-
-async function probeRemoteFileSize(source: string): Promise<number | null> {
-  try {
-    const response = await fetch(source, { method: "HEAD" });
-    if (!response.ok) {
-      return null;
-    }
-
-    const header = response.headers.get("content-length");
-    if (!header) {
-      return null;
-    }
-
-    const value = Number(header);
-    return Number.isFinite(value) ? value : null;
-  } catch {
-    return null;
-  }
 }
 
 function extractFileId(message: TelegramMessage): string | null {
@@ -95,6 +85,31 @@ function extractFileId(message: TelegramMessage): string | null {
     return message.animation.file_id;
   }
   return null;
+}
+
+function buildTelegramFileUrl(env: Env, filePath: string): string {
+  return `${TELEGRAM_API_BASE}/file/bot${env.TELEGRAM_BOT_TOKEN}/${filePath}`;
+}
+
+async function resolveTelegramFileMetadata(
+  env: Env,
+  fileId: string | null,
+): Promise<{ filePath?: string | null; fileUrl?: string | null }> {
+  if (!fileId) {
+    return {};
+  }
+
+  const file = await callTelegramApi<TelegramFile>(env, "getFile", {
+    file_id: fileId,
+  });
+  if (!file.file_path) {
+    return {};
+  }
+
+  return {
+    filePath: file.file_path,
+    fileUrl: buildTelegramFileUrl(env, file.file_path),
+  };
 }
 
 async function callTelegramApi<T>(
@@ -146,142 +161,6 @@ async function callTelegramApi<T>(
   throw lastError instanceof Error ? lastError : new Error(`Telegram API ${method} failed`);
 }
 
-async function callTelegramApiStream<T>(
-  env: Env,
-  method: string,
-  requestFactory: () => Promise<RequestInit>,
-  retries = 3,
-): Promise<T> {
-  let lastError: unknown;
-
-  for (let attempt = 0; attempt < retries; attempt += 1) {
-    try {
-      const init = await requestFactory();
-      const response = await fetch(telegramApiUrl(env, method), {
-        method: "POST",
-        ...init,
-      });
-
-      const body = (await response.json()) as TelegramApiResponse<T>;
-      if (response.ok && body.ok && body.result !== undefined) {
-        return body.result;
-      }
-
-      logWarn("telegram.api.stream_response_not_ok", {
-        method,
-        attempt: attempt + 1,
-        status: response.status,
-        description: body.description,
-      });
-
-      throw new Error(body.description ?? `Telegram API ${method} failed with ${response.status}`);
-    } catch (error) {
-      lastError = error;
-      if (attempt === retries - 1) {
-        break;
-      }
-      logWarn("telegram.api.stream_retrying", {
-        method,
-        attempt: attempt + 1,
-        max_retries: retries,
-        ...serializeError(error),
-      });
-      await wait(250 * 2 ** attempt);
-    }
-  }
-
-  throw lastError instanceof Error ? lastError : new Error(`Telegram API ${method} failed`);
-}
-
-function createMultipartVideoBody(
-  chatId: number,
-  caption: string | undefined,
-  filename: string,
-  contentType: string,
-  mediaStream: ReadableStream<Uint8Array>,
-): {
-  boundary: string;
-  body: ReadableStream<Uint8Array>;
-} {
-  const boundary = `----xLikeSaveBot${crypto.randomUUID().replace(/-/g, "")}`;
-  const encoder = new TextEncoder();
-  const partsBefore = [
-    `--${boundary}${MULTIPART_CHUNK_SEPARATOR}Content-Disposition: form-data; name="chat_id"${MULTIPART_CHUNK_SEPARATOR}${MULTIPART_CHUNK_SEPARATOR}${chatId}${MULTIPART_CHUNK_SEPARATOR}`,
-    caption
-      ? `--${boundary}${MULTIPART_CHUNK_SEPARATOR}Content-Disposition: form-data; name="caption"${MULTIPART_CHUNK_SEPARATOR}${MULTIPART_CHUNK_SEPARATOR}${caption}${MULTIPART_CHUNK_SEPARATOR}`
-      : null,
-    caption
-      ? `--${boundary}${MULTIPART_CHUNK_SEPARATOR}Content-Disposition: form-data; name="parse_mode"${MULTIPART_CHUNK_SEPARATOR}${MULTIPART_CHUNK_SEPARATOR}MarkdownV2${MULTIPART_CHUNK_SEPARATOR}`
-      : null,
-    `--${boundary}${MULTIPART_CHUNK_SEPARATOR}Content-Disposition: form-data; name="supports_streaming"${MULTIPART_CHUNK_SEPARATOR}${MULTIPART_CHUNK_SEPARATOR}true${MULTIPART_CHUNK_SEPARATOR}`,
-    `--${boundary}${MULTIPART_CHUNK_SEPARATOR}Content-Disposition: form-data; name="video"; filename="${filename}"${MULTIPART_CHUNK_SEPARATOR}Content-Type: ${contentType}${MULTIPART_CHUNK_SEPARATOR}${MULTIPART_CHUNK_SEPARATOR}`,
-  ].filter((part): part is string => Boolean(part));
-  const tail = `${MULTIPART_CHUNK_SEPARATOR}--${boundary}--${MULTIPART_CHUNK_SEPARATOR}`;
-
-  const body = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        for (const part of partsBefore) {
-          controller.enqueue(encoder.encode(part));
-        }
-
-        const reader = mediaStream.getReader();
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              break;
-            }
-            if (value) {
-              controller.enqueue(value);
-            }
-          }
-        } finally {
-          reader.releaseLock();
-        }
-
-        controller.enqueue(encoder.encode(tail));
-        controller.close();
-      } catch (error) {
-        controller.error(error);
-      }
-    },
-  });
-
-  return { boundary, body };
-}
-
-async function sendLargeVideoViaStream(
-  env: Env,
-  chatId: number,
-  source: string,
-  caption?: string,
-): Promise<TelegramMessage> {
-  return callTelegramApiStream<TelegramMessage>(env, "sendVideo", async () => {
-    const mediaResponse = await fetch(source);
-    if (!mediaResponse.ok || !mediaResponse.body) {
-      throw new Error(`Unable to fetch large video stream from ${source}`);
-    }
-
-    const contentType = mediaResponse.headers.get("content-type") ?? "video/mp4";
-    const filename = safeFilenameFromUrl(source, "video.mp4");
-    const multipart = createMultipartVideoBody(
-      chatId,
-      caption,
-      filename,
-      contentType,
-      mediaResponse.body as ReadableStream<Uint8Array>,
-    );
-
-    return {
-      headers: {
-        "Content-Type": `multipart/form-data; boundary=${multipart.boundary}`,
-      },
-      body: multipart.body,
-    };
-  });
-}
-
 export async function sendMessage(
   env: Env,
   chatId: number,
@@ -326,35 +205,35 @@ export async function sendMediaRecord(
   if (!source) {
     throw new Error(`Media ${media.id ?? media.media_key ?? media.tweet_id} has no sendable source`);
   }
+  if (
+    !media.telegram_file_id &&
+    media.file_size_bytes !== null &&
+    media.file_size_bytes !== undefined &&
+    media.file_size_bytes > TELEGRAM_MEDIA_SIZE_LIMIT_BYTES
+  ) {
+    throw new TelegramMediaSendError(
+      media,
+      `Media ${media.id ?? media.media_key ?? media.tweet_id} exceeds Telegram direct-send limit`,
+      true,
+    );
+  }
 
   let message: TelegramMessage;
-  if (media.media_type === "photo") {
-    message = await callTelegramApi<TelegramMessage>(env, "sendPhoto", {
-      chat_id: chatId,
-      photo: source,
-      caption,
-      parse_mode: caption ? "MarkdownV2" : undefined,
-    });
-  } else if (media.media_type === "animated_gif") {
-    message = await callTelegramApi<TelegramMessage>(env, "sendAnimation", {
-      chat_id: chatId,
-      animation: source,
-      caption,
-      parse_mode: caption ? "MarkdownV2" : undefined,
-    });
-  } else {
-    const fileSizeBytes =
-      media.file_size_bytes ??
-      (isHttpUrl(source) ? await probeRemoteFileSize(source) : null);
-
-    if (isHttpUrl(source) && fileSizeBytes !== null && fileSizeBytes > TELEGRAM_URL_VIDEO_LIMIT_BYTES) {
-      logInfo("telegram.video.large_stream_upload", {
+  try {
+    if (media.media_type === "photo") {
+      message = await callTelegramApi<TelegramMessage>(env, "sendPhoto", {
         chat_id: chatId,
-        media_id: media.id,
-        tweet_id: media.tweet_id,
-        file_size_bytes: fileSizeBytes,
+        photo: source,
+        caption,
+        parse_mode: caption ? "MarkdownV2" : undefined,
       });
-      message = await sendLargeVideoViaStream(env, chatId, source, caption);
+    } else if (media.media_type === "animated_gif") {
+      message = await callTelegramApi<TelegramMessage>(env, "sendAnimation", {
+        chat_id: chatId,
+        animation: source,
+        caption,
+        parse_mode: caption ? "MarkdownV2" : undefined,
+      });
     } else {
       message = await callTelegramApi<TelegramMessage>(env, "sendVideo", {
         chat_id: chatId,
@@ -363,18 +242,32 @@ export async function sendMediaRecord(
         parse_mode: caption ? "MarkdownV2" : undefined,
       });
     }
+  } catch (error) {
+    if (shouldFallbackToR2(media, source, error)) {
+      throw new TelegramMediaSendError(
+        media,
+        error instanceof Error ? error.message : String(error),
+        true,
+        error,
+      );
+    }
+    throw error;
   }
 
+  const fileId = extractFileId(message);
+  const fileMetadata = await resolveTelegramFileMetadata(env, fileId);
   return {
     mediaId: media.id,
-    fileId: extractFileId(message),
+    fileId,
+    filePath: fileMetadata.filePath ?? null,
+    fileUrl: fileMetadata.fileUrl ?? null,
   };
 }
 
 async function sendMediaGroup(
   env: Env,
   chatId: number,
-  caption: string,
+  caption: string | undefined,
   mediaItems: MediaRecord[],
 ): Promise<SentMediaResult[]> {
   logInfo("telegram.media_group.sending", {
@@ -392,7 +285,7 @@ async function sendMediaGroup(
       type: media.media_type === "photo" ? "photo" : "video",
       media: source,
       caption: index === 0 ? caption : undefined,
-      parse_mode: index === 0 ? "MarkdownV2" : undefined,
+      parse_mode: index === 0 && caption ? "MarkdownV2" : undefined,
     };
   });
 
@@ -401,35 +294,125 @@ async function sendMediaGroup(
     media: payload,
   });
 
-  return mediaItems.map((media, index) => ({
-    mediaId: media.id,
-    fileId: messages[index] ? extractFileId(messages[index]) : null,
+  return Promise.all(mediaItems.map(async (media, index) => {
+    const fileId = messages[index] ? extractFileId(messages[index]) : null;
+    const fileMetadata = await resolveTelegramFileMetadata(env, fileId);
+    return {
+      mediaId: media.id,
+      fileId,
+      filePath: fileMetadata.filePath ?? null,
+      fileUrl: fileMetadata.fileUrl ?? null,
+    };
   }));
 }
 
 export async function sendTweetMessage(
   env: Env,
   chatId: number,
-  markdown: string,
+  markdown: string | undefined,
   mediaItems: MediaRecord[],
-): Promise<SentMediaResult[]> {
+): Promise<SendTweetMessageResult> {
   if (mediaItems.length === 0) {
-    await sendMessage(env, chatId, markdown);
-    return [];
+    if (markdown) {
+      await sendMessage(env, chatId, markdown);
+    }
+    return {
+      sentResults: [],
+      fallbackMedia: [],
+    };
   }
 
   if (
-    mediaItems.length > 1 &&
-    mediaItems.every((media) => media.media_type === "photo" || media.media_type === "video")
+    shouldSendViaMediaGroup(mediaItems)
   ) {
-    return sendMediaGroup(env, chatId, markdown, mediaItems);
+    try {
+      return {
+        sentResults: await sendMediaGroup(env, chatId, markdown, mediaItems),
+        fallbackMedia: [],
+      };
+    } catch (error) {
+      if (!isRecoverableMediaGroupError(error)) {
+        throw error;
+      }
+
+      logWarn("telegram.media_group.fallback_to_single", {
+        chat_id: chatId,
+        media_count: mediaItems.length,
+        tweet_id: mediaItems[0]?.tweet_id ?? null,
+        ...serializeError(error),
+      });
+    }
   }
 
   const results: SentMediaResult[] = [];
+  const fallbackMedia: MediaRecord[] = [];
+  let captionSent = false;
   for (let index = 0; index < mediaItems.length; index += 1) {
     const media = mediaItems[index];
-    const result = await sendMediaRecord(env, chatId, media, index === 0 ? markdown : undefined);
-    results.push(result);
+    try {
+      const result = await sendMediaRecord(
+        env,
+        chatId,
+        media,
+        !captionSent ? markdown : undefined,
+      );
+      results.push(result);
+      captionSent ||= Boolean(markdown);
+    } catch (error) {
+      if (!(error instanceof TelegramMediaSendError) || !error.needsR2Fallback) {
+        throw error;
+      }
+
+      fallbackMedia.push(media);
+      logWarn("telegram.media.single.defer_to_r2", {
+        chat_id: chatId,
+        media_id: media.id ?? null,
+        tweet_id: media.tweet_id,
+        media_type: media.media_type,
+        ...serializeError(error),
+      });
+    }
   }
-  return results;
+  return {
+    sentResults: results,
+    fallbackMedia,
+  };
+}
+
+function shouldSendViaMediaGroup(mediaItems: MediaRecord[]): boolean {
+  return (
+    mediaItems.length > 1 &&
+    mediaItems.every((media) => media.media_type === "photo" || media.media_type === "video") &&
+    !mediaItems.some((media) =>
+      media.media_type === "video" &&
+      !media.telegram_file_id &&
+      isHttpUrl(media.x_original_url ?? ""),
+    )
+  );
+}
+
+function isRecoverableMediaGroupError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return isMediaUrlSendErrorMessage(message);
+}
+
+function shouldFallbackToR2(media: MediaRecord, source: string, error: unknown): boolean {
+  if (media.telegram_file_id || !isHttpUrl(source)) {
+    return false;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return isMediaUrlSendErrorMessage(message);
+}
+
+function isMediaUrlSendErrorMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("webpage_media_empty") ||
+    normalized.includes("failed to get http url content") ||
+    normalized.includes("wrong file identifier/http url specified") ||
+    normalized.includes("wrong type of the web page content") ||
+    normalized.includes("file is too big") ||
+    normalized.includes("request entity too large")
+  );
 }

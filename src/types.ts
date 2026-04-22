@@ -26,6 +26,8 @@ export interface AccountData {
   telegram_chat_id: number;
   username: string;
   display_name?: string | null;
+  x_client_id?: string | null;
+  x_client_secret?: string | null;
   access_token: string;
   refresh_token: string;
   token_expires_at: number;
@@ -67,6 +69,8 @@ export interface MediaRecord {
   media_key?: string | null;
   media_type: MediaType;
   telegram_file_id?: string | null;
+  telegram_file_path?: string | null;
+  telegram_file_url?: string | null;
   r2_key?: string | null;
   r2_public_url?: string | null;
   x_original_url?: string | null;
@@ -83,12 +87,16 @@ export interface MediaRecord {
 export interface AuthState {
   code_verifier: string;
   telegram_chat_id: number;
+  x_client_id: string;
+  x_client_secret: string;
+  expected_account_id?: string | null;
   created_at: string;
 }
 
 export interface SetupState {
   step: "client_id" | "client_secret";
   client_id?: string;
+  target_account_id?: string | null;
 }
 
 export interface XMediaVariant {

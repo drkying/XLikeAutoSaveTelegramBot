@@ -4,14 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "dev:scheduled": "wrangler dev --test-scheduled",
-    "db:init:local": "wrangler d1 execute CF_D1_DATABASE_NAME_REMOVED --local --file=migrations/0001_init.sql",
-    "db:init:remote": "wrangler d1 execute CF_D1_DATABASE_NAME_REMOVED --remote --file=migrations/0001_init.sql",
+    "cf:config": "node ./scripts/render-wrangler-config.mjs",
+    "dev": "npm run cf:config && wrangler dev --config .wrangler/generated/wrangler.jsonc",
+    "dev:scheduled": "npm run cf:config && wrangler dev --test-scheduled --config .wrangler/generated/wrangler.jsonc",
+    "db:init:local": "npm run cf:config && wrangler d1 migrations apply DB --local --config .wrangler/generated/wrangler.jsonc",
+    "db:init:remote": "npm run cf:config && wrangler d1 migrations apply DB --remote --config .wrangler/generated/wrangler.jsonc",
     "build": "npm run cf-typegen && npm run check && npm run db:init:local",
-    "deploy": "npm run build && npm run db:init:remote && wrangler deploy",
+    "deploy": "npm run build && npm run db:init:remote && npm run cf:config && wrangler deploy --config .wrangler/generated/wrangler.jsonc",
     "check": "tsc --noEmit",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "npm run cf:config && wrangler types --config .wrangler/generated/wrangler.jsonc"
   },
   "dependencies": {
     "grammy": "^1.38.2",

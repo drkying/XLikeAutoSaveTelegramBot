@@ -74,14 +74,17 @@ export class Database {
     await this.prepare(
       `INSERT INTO accounts (
          account_id, telegram_chat_id, username, display_name,
+         x_client_id, x_client_secret,
          access_token, refresh_token, token_expires_at,
          is_active, poll_interval_min, poll_start_hour, poll_end_hour,
          last_poll_at, last_tweet_id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       account.account_id,
       account.telegram_chat_id,
       account.username,
       account.display_name ?? null,
+      account.x_client_id ?? null,
+      account.x_client_secret ?? null,
       account.access_token,
       account.refresh_token,
       account.token_expires_at,
@@ -105,6 +108,8 @@ export class Database {
       "telegram_chat_id",
       "username",
       "display_name",
+      "x_client_id",
+      "x_client_secret",
       "access_token",
       "refresh_token",
       "token_expires_at",
@@ -175,7 +180,10 @@ export class Database {
 
   async listActiveAccounts(): Promise<AccountData[]> {
     const result = await this.prepare(
-      `SELECT * FROM accounts WHERE is_active = 1 ORDER BY created_at ASC`,
+      `SELECT *
+       FROM accounts
+       WHERE is_active = 1
+       ORDER BY CASE WHEN last_poll_at IS NULL THEN 0 ELSE 1 END ASC, last_poll_at ASC, created_at ASC`,
     ).all<AccountData>();
     return result.results ?? [];
   }
@@ -286,6 +294,20 @@ export class Database {
     return result.results ?? [];
   }
 
+  async getExistingTweetIds(tweetIds: readonly string[]): Promise<Set<string>> {
+    if (tweetIds.length === 0) {
+      return new Set();
+    }
+
+    const placeholders = tweetIds.map(() => "?").join(", ");
+    const result = await this.prepare(
+      `SELECT tweet_id FROM tweets WHERE tweet_id IN (${placeholders})`,
+      ...tweetIds,
+    ).all<{ tweet_id: string }>();
+
+    return new Set((result.results ?? []).map((row) => row.tweet_id));
+  }
+
   async searchTweets(query: string, options: SearchTweetOptions = {}): Promise<TweetRecord[]> {
     const limit = options.limit ?? 20;
     const term = `%${query}%`;
@@ -335,14 +357,17 @@ export class Database {
 
     const result = await this.prepare(
       `INSERT INTO media (
-         tweet_id, media_key, media_type, telegram_file_id, r2_key, r2_public_url,
+         tweet_id, media_key, media_type, telegram_file_id, telegram_file_path, telegram_file_url,
+         r2_key, r2_public_url,
          x_original_url, width, height, duration_ms, file_size_bytes,
          content_type, bitrate, storage_status
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       media.tweet_id,
       media.media_key ?? null,
       media.media_type,
       media.telegram_file_id ?? null,
+      media.telegram_file_path ?? null,
+      media.telegram_file_url ?? null,
       media.r2_key ?? null,
       media.r2_public_url ?? null,
       media.x_original_url ?? null,
@@ -363,6 +388,8 @@ export class Database {
     const values: SqlValue[] = [];
     const allowed: Array<keyof MediaRecord> = [
       "telegram_file_id",
+      "telegram_file_path",
+      "telegram_file_url",
       "r2_key",
       "r2_public_url",
       "x_original_url",

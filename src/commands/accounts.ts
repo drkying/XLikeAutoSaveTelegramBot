@@ -1,6 +1,7 @@
 import type { Bot } from "grammy";
 import type { CommandDependencies } from "./helpers";
-import { formatAccountSummary, getChatId } from "./helpers";
+import { getChatId } from "./helpers";
+import { buildAccountsKeyboard, buildAccountsMessage, buildMainMenuKeyboard } from "./ui";
 
 export function registerAccountsCommand(bot: Bot, deps: CommandDependencies): void {
   bot.command("accounts", async (ctx) => {
@@ -11,10 +12,14 @@ export function registerAccountsCommand(bot: Bot, deps: CommandDependencies): vo
 
     const accounts = await deps.db.listAccountsByUser(chatId);
     if (accounts.length === 0) {
-      await ctx.reply("No X accounts connected yet. Run /login.");
+      await ctx.reply("No X accounts connected yet. Run /login.", {
+        reply_markup: buildMainMenuKeyboard(),
+      });
       return;
     }
 
-    await ctx.reply(["Connected accounts:", ...accounts.map(formatAccountSummary)].join("\n"));
+    await ctx.reply(buildAccountsMessage(accounts), {
+      reply_markup: buildAccountsKeyboard(accounts),
+    });
   });
 }

@@ -24,7 +24,11 @@ export interface ProcessMediaItemOptions {
   keyPrefix?: string;
   r2Key?: string;
   fetchInit?: RequestInit;
+  onlyWhenExceedsTelegramLimit?: boolean;
+  failureStatus?: MediaStorageStatus;
 }
+
+export const TELEGRAM_MEDIA_SIZE_LIMIT_BYTES = 50 * 1024 * 1024;
 
 export async function uploadToR2(
   env: Env,
@@ -82,26 +86,50 @@ export async function processMediaItem(
   }
 
   try {
-    const response = await fetchMediaWithRetry(
-      mediaItem.x_original_url,
-      options.fetchInit,
-    );
-    const fileSize = readContentLength(response.headers.get("content-length"));
-    const exceedsTelegramVideoLimit =
-      mediaItem.media_type === "video" &&
-      typeof fileSize === "number" &&
-      fileSize > 50 * 1024 * 1024;
-    const contentType = response.headers.get("content-type") ?? mediaItem.content_type ?? inferContentType(mediaItem);
-    const r2Key = options.r2Key ?? buildMediaR2Key(mediaItem, options, contentType);
-    const body = response.body ?? await response.arrayBuffer();
+    const shouldProbeMetadata =
+      options.onlyWhenExceedsTelegramLimit === true &&
+      !mediaItem.telegram_file_id &&
+      (mediaItem.file_size_bytes === null ||
+        mediaItem.file_size_bytes === undefined ||
+        mediaItem.content_type === null ||
+        mediaItem.content_type === undefined);
+    const metadata = shouldProbeMetadata
+      ? await probeRemoteMediaMetadata(mediaItem.x_original_url, options.fetchInit)
+      : {};
+    const fileSize = mediaItem.file_size_bytes ?? metadata.contentLength;
+    const contentType = metadata.contentType ?? mediaItem.content_type ?? inferContentType(mediaItem);
+    const exceedsTelegramSizeLimit =
+      !mediaItem.telegram_file_id &&
+      (metadata.exceedsTelegramLimit === true ||
+        (typeof fileSize === "number" && fileSize > TELEGRAM_MEDIA_SIZE_LIMIT_BYTES));
     logInfo("media.process.started", {
       tweet_id: mediaItem.tweet_id,
       media_key: mediaItem.media_key ?? null,
       media_type: mediaItem.media_type,
       file_size_bytes: fileSize ?? mediaItem.file_size_bytes ?? null,
-      exceeds_telegram_url_limit: exceedsTelegramVideoLimit,
+      exceeds_telegram_size_limit: exceedsTelegramSizeLimit,
+      only_when_exceeds_telegram_limit: options.onlyWhenExceedsTelegramLimit === true,
     });
-    const upload = await uploadToR2(env, r2Key, body, contentType, {
+
+    if (options.onlyWhenExceedsTelegramLimit === true && !exceedsTelegramSizeLimit) {
+      return {
+        ...mediaItem,
+        file_size_bytes: fileSize ?? mediaItem.file_size_bytes ?? null,
+        content_type: contentType ?? mediaItem.content_type ?? null,
+        storage_status: mediaItem.telegram_file_id ? "telegram" : mediaItem.storage_status,
+      };
+    }
+
+    const response = await fetchMediaWithRetry(
+      mediaItem.x_original_url,
+      options.fetchInit,
+    );
+    const responseFileSize = readContentLength(response.headers.get("content-length")) ?? fileSize;
+    const responseContentType =
+      response.headers.get("content-type") ?? contentType ?? mediaItem.content_type ?? inferContentType(mediaItem);
+    const r2Key = options.r2Key ?? buildMediaR2Key(mediaItem, options, responseContentType);
+    const body = response.body ?? await response.arrayBuffer();
+    const upload = await uploadToR2(env, r2Key, body, responseContentType, {
       tweetId: mediaItem.tweet_id,
       mediaKey: mediaItem.media_key,
       mediaType: mediaItem.media_type,
@@ -111,10 +139,10 @@ export async function processMediaItem(
       ...mediaItem,
       r2_key: upload.key,
       r2_public_url: upload.publicUrl,
-      file_size_bytes: mediaItem.file_size_bytes ?? fileSize ?? null,
-      content_type: contentType ?? mediaItem.content_type ?? null,
+      file_size_bytes: responseFileSize ?? mediaItem.file_size_bytes ?? null,
+      content_type: responseContentType ?? mediaItem.content_type ?? null,
       storage_status:
-        exceedsTelegramVideoLimit && !mediaItem.telegram_file_id
+        options.onlyWhenExceedsTelegramLimit === true && !mediaItem.telegram_file_id
           ? "r2"
           : resolveSuccessStatus(mediaItem),
     };
@@ -127,9 +155,31 @@ export async function processMediaItem(
     });
     return {
       ...mediaItem,
-      storage_status: resolveFailureStatus(mediaItem),
+      storage_status: options.failureStatus ?? resolveFailureStatus(mediaItem),
     };
   }
+}
+
+export async function ensureMediaStoredInR2(
+  env: Env,
+  mediaItem: MediaRecord,
+  options: ProcessMediaItemOptions = {},
+): Promise<MediaRecord> {
+  const existingPublicUrl =
+    mediaItem.r2_public_url ?? (mediaItem.r2_key ? getR2PublicUrl(env, mediaItem.r2_key) : null);
+  if (existingPublicUrl) {
+    return {
+      ...mediaItem,
+      r2_public_url: existingPublicUrl,
+      storage_status: mediaItem.telegram_file_id ? "telegram" : "r2",
+    };
+  }
+
+  return processMediaItem(env, mediaItem, {
+    ...options,
+    onlyWhenExceedsTelegramLimit: false,
+    failureStatus: "failed",
+  });
 }
 
 export function buildMediaR2Key(
@@ -192,6 +242,144 @@ async function fetchMediaWithRetry(
       });
       await sleep(Math.min(500 * (2 ** (attempt - 1)), 8_000));
     }
+  }
+}
+
+async function probeRemoteMediaMetadata(
+  url: string,
+  init?: RequestInit,
+): Promise<{
+  contentLength?: number;
+  contentType?: string | null;
+  exceedsTelegramLimit?: boolean;
+}> {
+  const headMetadata = await probeRemoteMediaHeadMetadata(url, init);
+  if (headMetadata.contentLength !== undefined) {
+    return {
+      ...headMetadata,
+      exceedsTelegramLimit: headMetadata.contentLength > TELEGRAM_MEDIA_SIZE_LIMIT_BYTES,
+    };
+  }
+
+  const rangeMetadata = await probeRemoteMediaRangeMetadata(url, init);
+  if (rangeMetadata.contentLength !== undefined) {
+    return {
+      ...rangeMetadata,
+      exceedsTelegramLimit: rangeMetadata.contentLength > TELEGRAM_MEDIA_SIZE_LIMIT_BYTES,
+    };
+  }
+
+  return probeRemoteMediaStreamMetadata(url, init);
+}
+
+async function probeRemoteMediaHeadMetadata(
+  url: string,
+  init?: RequestInit,
+): Promise<{ contentLength?: number; contentType?: string | null }> {
+  try {
+    const response = await fetch(url, {
+      ...init,
+      method: "HEAD",
+    });
+    if (!response.ok) {
+      return {};
+    }
+
+    return {
+      contentLength: readContentLength(response.headers.get("content-length")),
+      contentType: response.headers.get("content-type"),
+    };
+  } catch (error) {
+    logWarn("media.metadata_probe.failed", {
+      url,
+      ...serializeError(error),
+    });
+    return {};
+  }
+}
+
+async function probeRemoteMediaRangeMetadata(
+  url: string,
+  init?: RequestInit,
+): Promise<{ contentLength?: number; contentType?: string | null }> {
+  try {
+    const response = await fetch(url, withHeaders(init, {
+      Range: "bytes=0-0",
+    }));
+    if (!response.ok) {
+      return {};
+    }
+
+    const totalLength = readContentRangeTotal(response.headers.get("content-range"));
+    return {
+      contentLength: totalLength ?? readContentLength(response.headers.get("content-length")),
+      contentType: response.headers.get("content-type"),
+    };
+  } catch (error) {
+    logWarn("media.metadata_range_probe.failed", {
+      url,
+      ...serializeError(error),
+    });
+    return {};
+  }
+}
+
+async function probeRemoteMediaStreamMetadata(
+  url: string,
+  init?: RequestInit,
+): Promise<{
+  contentLength?: number;
+  contentType?: string | null;
+  exceedsTelegramLimit?: boolean;
+}> {
+  try {
+    const response = await fetchMediaWithRetry(url, init);
+    const contentType = response.headers.get("content-type");
+    const headerLength = readContentLength(response.headers.get("content-length"));
+    if (headerLength !== undefined) {
+      return {
+        contentLength: headerLength,
+        contentType,
+        exceedsTelegramLimit: headerLength > TELEGRAM_MEDIA_SIZE_LIMIT_BYTES,
+      };
+    }
+
+    if (!response.body) {
+      const buffer = await response.arrayBuffer();
+      return {
+        contentLength: buffer.byteLength,
+        contentType,
+        exceedsTelegramLimit: buffer.byteLength > TELEGRAM_MEDIA_SIZE_LIMIT_BYTES,
+      };
+    }
+
+    const reader = response.body.getReader();
+    let totalBytes = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        return {
+          contentLength: totalBytes,
+          contentType,
+        };
+      }
+
+      totalBytes += value.byteLength;
+      if (totalBytes > TELEGRAM_MEDIA_SIZE_LIMIT_BYTES) {
+        await cancelReader(reader);
+        return {
+          contentLength: totalBytes,
+          contentType,
+          exceedsTelegramLimit: true,
+        };
+      }
+    }
+  } catch (error) {
+    logWarn("media.metadata_stream_probe.failed", {
+      url,
+      ...serializeError(error),
+    });
+    return {};
   }
 }
 
@@ -312,6 +500,40 @@ function readContentLength(header: string | null): number | undefined {
 
   const value = Number(header);
   return Number.isFinite(value) ? value : undefined;
+}
+
+function readContentRangeTotal(header: string | null): number | undefined {
+  if (!header) {
+    return undefined;
+  }
+
+  const match = /^bytes\s+\d+-\d+\/(\d+)$/.exec(header.trim());
+  if (!match) {
+    return undefined;
+  }
+
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function withHeaders(init: RequestInit | undefined, extraHeaders: Record<string, string>): RequestInit {
+  const headers = new Headers(init?.headers);
+  for (const [key, value] of Object.entries(extraHeaders)) {
+    headers.set(key, value);
+  }
+
+  return {
+    ...init,
+    headers,
+  };
+}
+
+async function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+  try {
+    await reader.cancel("telegram_limit_exceeded");
+  } catch {
+    // Ignore cancellation failures from upstream streams.
+  }
 }
 
 function getRetryDelayMs(response: Response, attempt: number): number {

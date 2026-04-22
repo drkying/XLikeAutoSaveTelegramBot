@@ -10,23 +10,11 @@ import { registerRemoveCommand } from "./commands/remove";
 import { registerSetupCommand, handleSetupConversation } from "./commands/setup";
 import { registerStartCommand } from "./commands/start";
 import { registerStatusCommand } from "./commands/status";
+import { getKnownCommands, registerUiCallbacks, syncBotCommands } from "./commands/ui";
 import type { Env } from "./types";
 
 let botInstance: Bot | null = null;
 let botInitPromise: Promise<void> | null = null;
-
-function buildKnownCommandSet(): Set<string> {
-  return new Set([
-    "/start",
-    "/setup",
-    "/login",
-    "/accounts",
-    "/remove",
-    "/polling",
-    "/convert",
-    "/status",
-  ]);
-}
 
 export function getBot(env: Env): Bot {
   if (botInstance) {
@@ -38,7 +26,7 @@ export function getBot(env: Env): Bot {
     env,
     db: createDatabase(env),
   };
-  const knownCommands = buildKnownCommandSet();
+  const knownCommands = getKnownCommands();
 
   registerStartCommand(bot);
   registerSetupCommand(bot, deps);
@@ -48,6 +36,7 @@ export function getBot(env: Env): Bot {
   registerPollingCommand(bot, deps);
   registerConvertCommand(bot, deps);
   registerStatusCommand(bot, deps);
+  registerUiCallbacks(bot, deps);
 
   bot.on("message:text", async (ctx) => {
     if (await handleSetupConversation(ctx, deps)) {
@@ -86,13 +75,28 @@ export function createWebhookHandler(env: Env) {
   return async (request: Request) => {
     if (!botInitPromise) {
       logInfo("bot.init.started");
-      botInitPromise = bot.init().catch((error) => {
-        botInitPromise = null;
-        logError("bot.init.failed", {
-          ...serializeError(error),
-        });
-        throw error;
-      });
+      botInitPromise = (async () => {
+        try {
+          await bot.init();
+        } catch (error) {
+          botInitPromise = null;
+          logError("bot.init.failed", {
+            ...serializeError(error),
+          });
+          throw error;
+        }
+
+        try {
+          await syncBotCommands(bot);
+          logInfo("bot.commands.synced", {
+            command_count: getKnownCommands().size,
+          });
+        } catch (error) {
+          logError("bot.commands.sync.failed", {
+            ...serializeError(error),
+          });
+        }
+      })();
     }
     await botInitPromise;
     logInfo("bot.webhook.dispatch");

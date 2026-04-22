@@ -85,8 +85,8 @@ interface FetchJsonOptions {
 
 interface RefreshContext {
   account: AccountData;
-  user: UserData;
   db: Database;
+  user?: UserData;
 }
 
 type JsonValue =
@@ -170,8 +170,8 @@ export async function refreshAccessToken(
 
 export async function ensureValidToken(
   account: AccountData,
-  user: UserData,
   db: Database,
+  user?: UserData,
 ): Promise<AccountData> {
   const nowSeconds = Math.floor(Date.now() / 1000);
   if (account.token_expires_at > nowSeconds + TOKEN_REFRESH_SKEW_SECONDS) {
@@ -213,11 +213,11 @@ export async function getLikedTweets(
   options: GetLikedTweetsOptions = {},
 ): Promise<XLikedTweetsResponse> {
   const maxResults = clamp(options.maxResults ?? 100, 5, 100);
-  const refreshContext = options.account && options.user && options.db
+  const refreshContext = options.account && options.db
     ? {
         account: options.account,
-        user: options.user,
         db: options.db,
+        user: options.user,
       }
     : undefined;
 
@@ -293,8 +293,8 @@ async function fetchXApiJson<T>(
   if (options.refreshContext) {
     const refreshedAccount = await ensureValidToken(
       options.refreshContext.account,
-      options.refreshContext.user,
       options.refreshContext.db,
+      options.refreshContext.user,
     );
     currentAccessToken = refreshedAccount.access_token;
     headers.set("authorization", `Bearer ${currentAccessToken}`);
@@ -416,13 +416,22 @@ async function fetchWithRetry(
 
 async function refreshAccountAccessToken(
   account: AccountData,
-  user: UserData,
+  user: UserData | undefined,
   db: Database,
 ): Promise<AccountData> {
+  const clientId = account.x_client_id ?? user?.x_client_id;
+  const clientSecret = account.x_client_secret ?? user?.x_client_secret;
+  if (!clientId || !clientSecret) {
+    throw new XApiError(
+      `Client credentials missing for account ${account.account_id}; update credentials and log in again.`,
+      401,
+    );
+  }
+
   const token = await refreshAccessToken({
     refreshToken: account.refresh_token,
-    clientId: user.x_client_id,
-    clientSecret: user.x_client_secret,
+    clientId,
+    clientSecret,
   });
 
   const nextAccount: AccountData = {
