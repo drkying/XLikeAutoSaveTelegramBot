@@ -129,6 +129,11 @@ function applyRuntimeLimits(config, envSource) {
 }
 
 function normalizeConfigPaths(config) {
+  if (config.main) {
+    const absoluteMainFile = path.resolve(projectRoot, config.main);
+    config.main = path.relative(outputDir, absoluteMainFile).split(path.sep).join("/");
+  }
+
   const d1Config = config.d1_databases?.[0];
   if (!d1Config?.migrations_dir) {
     return;
