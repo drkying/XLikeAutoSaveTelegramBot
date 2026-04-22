@@ -75,10 +75,11 @@ npm run cf:config
 
 ## 4. `wrangler.jsonc` 配置
 
-当前项目把 [wrangler.jsonc](../wrangler.jsonc) 作为模板文件提交到仓库。模板中只保留绑定名，不提交资源实例信息：
+当前项目把 [wrangler.jsonc](../wrangler.jsonc) 作为模板文件提交到仓库。模板中只保留绑定名，不提交资源实例信息，并启用了 `keep_vars` 以避免部署时误清空 Dashboard 已配置的 plain-text 运行时变量：
 
 ```json
 {
+  "keep_vars": true,
   "kv_namespaces": [
     { "binding": "KV" }
   ],
@@ -98,25 +99,17 @@ npm run cf:config
 
 ### 运行时 `vars` 字段说明
 
-```json
-{
-  "vars": {
-    "WORKERS_PAID_ENABLED": "false",
-    "R2_PUBLIC_DOMAIN": "",
-    "APP_BASE_URL": "http://localhost:8787"
-  }
-}
-```
+`WORKERS_PAID_ENABLED`、`R2_PUBLIC_DOMAIN`、`APP_BASE_URL` 不再在仓库模板里写死默认值。`npm run cf:config` 只会在这些值明确存在于 `.dev.vars`、`.env*`、shell / CI 环境变量时，把它们写进 `.wrangler/generated/wrangler.jsonc`。
 
 含义如下：
 
 | 变量 | 是否必填 | 说明 |
 |---|---|---|
-| `WORKERS_PAID_ENABLED` | 否 | 仅作运行时标记，默认 `false` |
+| `WORKERS_PAID_ENABLED` | 否 | 仅作运行时标记；代码里未设置时会按 `false` 处理 |
 | `R2_PUBLIC_DOMAIN` | 否 | 配了以后媒体可生成公开 URL；不配也能上传，但链接字段可能为空 |
-| `APP_BASE_URL` | 是 | 本地开发时一般为 `http://localhost:8787`；部署后必须改成线上 Worker 地址 |
+| `APP_BASE_URL` | 是 | OAuth 回调基地址；本地开发和线上都必须在实际运行环境里提供 |
 
-这些值同样会被 `npm run cf:config` 从环境变量覆盖；也就是说，仓库模板只保存安全默认值，实际环境值建议放在 `.dev.vars`、`.env*`、CI 环境变量或 Cloudflare Dashboard 中。
+这些值会被 `npm run cf:config` 从环境变量写入生成配置；如果构建期没有提供，而线上 Dashboard 里已经有运行时变量，`keep_vars` 会让 `npm run deploy` 保留这些现有值，不会被模板默认值覆盖。
 
 ## 5. 本地开发配置：`.dev.vars`
 
@@ -328,16 +321,32 @@ npm run deploy
 会自动执行：
 
 1. `npm run build`
-2. 远程 D1 初始化：
+2. `wrangler deploy --keep-vars --config .wrangler/generated/wrangler.jsonc`
+3. 如果生成配置里已经有 `DB.database_id`，再执行远程 D1 初始化：
    `wrangler d1 migrations apply DB --remote --config .wrangler/generated/wrangler.jsonc`
-3. 重新生成有效配置
-4. `wrangler deploy --config .wrangler/generated/wrangler.jsonc`
+4. 如果部署后生成配置里仍然没有 `database_id`，脚本会打印告警并跳过远程 migration，而不是直接让整次部署失败
 
-## 14. 生产前检查
+## 14. Cloudflare Git 自动构建注意事项
+
+Cloudflare Workers Builds 里有两套变量来源：
+
+1. `Settings > Build > Build variables and secrets`
+2. Worker 自己的 `Variables and secrets`
+
+它们不是同一套，Build variables 只在构建 / 部署命令执行时可见，不会自动继承 Worker 运行时变量。
+
+因此：
+
+- `CF_D1_DATABASE_NAME`、`CF_D1_DATABASE_ID`、`CF_KV_ID`、`CF_KV_PREVIEW_ID`、`CF_D1_PREVIEW_DATABASE_ID`、`CF_R2_BUCKET_NAME` 这种会影响 Wrangler 绑定生成的值，如果要在 Git 自动部署里复用已有资源，必须放到 Build variables and secrets。
+- `APP_BASE_URL`、`R2_PUBLIC_DOMAIN`、`WORKERS_PAID_ENABLED` 如果希望由构建时生成的 `wrangler` 配置主动覆盖线上值，也应放到 Build variables 里。
+- 如果这些运行时 plain-text 变量只配置在 Worker Dashboard，而没有放到 Build variables，`npm run deploy` 会依赖 `--keep-vars` 保留它们的线上现值。
+- `TELEGRAM_BOT_TOKEN`、`WEBHOOK_SECRET`、`ADMIN_CHAT_ID` 仍然属于运行时 Secret / Variable，不需要为了 `npm run build` 重复配置到 Build variables，除非你的自定义构建脚本显式读取了它们。
+
+## 15. 生产前检查
 
 部署前确认：
 
-- 需要复用已有资源时，`CF_*` 变量已经设置到 shell / CI / `.env*`
+- 需要复用已有资源时，`CF_*` 变量已经设置到 shell / CI / `.env*`，或者 Cloudflare Git 的 Build variables and secrets
 - `APP_BASE_URL` 已切到线上域名
 - D1 migration 已执行
 - `TELEGRAM_BOT_TOKEN` 已设置
@@ -346,7 +355,7 @@ npm run deploy
 - Telegram webhook 已指向线上 `/webhook`
 - `ADMIN_CHAT_ID` 已配置
 
-## 15. 运维建议
+## 16. 运维建议
 
 当前项目已开启 `wrangler.jsonc` / 生成后的有效配置中的：
 

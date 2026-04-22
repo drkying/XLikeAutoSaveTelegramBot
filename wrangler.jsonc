@@ -4,6 +4,7 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-04-22",
   "compatibility_flags": ["nodejs_compat"],
+  "keep_vars": true,
   "triggers": {
     "crons": ["*/5 * * * *"]
   },
@@ -23,11 +24,6 @@
       "binding": "R2"
     }
   ],
-  "vars": {
-    "WORKERS_PAID_ENABLED": "false",
-    "R2_PUBLIC_DOMAIN": "",
-    "APP_BASE_URL": "http://localhost:8787"
-  },
   "observability": {
     "logs": {
       "enabled": true

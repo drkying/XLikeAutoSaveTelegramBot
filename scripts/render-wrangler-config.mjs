@@ -78,13 +78,36 @@ function applyExistingResourceOverrides(config, envSource) {
 }
 
 function applyRuntimeVarOverrides(config, envSource) {
-  const baseVars = config.vars ?? {};
-  config.vars = {
-    ...baseVars,
-    WORKERS_PAID_ENABLED: readOptional(envSource, "WORKERS_PAID_ENABLED") ?? baseVars.WORKERS_PAID_ENABLED ?? "false",
-    R2_PUBLIC_DOMAIN: readOptional(envSource, "R2_PUBLIC_DOMAIN") ?? baseVars.R2_PUBLIC_DOMAIN ?? "",
-    APP_BASE_URL: readOptional(envSource, "APP_BASE_URL") ?? baseVars.APP_BASE_URL ?? "http://localhost:8787"
-  };
+  const managedVarNames = new Set([
+    "WORKERS_PAID_ENABLED",
+    "R2_PUBLIC_DOMAIN",
+    "APP_BASE_URL"
+  ]);
+  const runtimeVars = Object.fromEntries(
+    Object.entries(config.vars ?? {}).filter(([key]) => !managedVarNames.has(key))
+  );
+
+  const workersPaidEnabled = readOptional(envSource, "WORKERS_PAID_ENABLED");
+  if (workersPaidEnabled) {
+    runtimeVars.WORKERS_PAID_ENABLED = workersPaidEnabled;
+  }
+
+  const r2PublicDomain = readOptional(envSource, "R2_PUBLIC_DOMAIN");
+  if (r2PublicDomain) {
+    runtimeVars.R2_PUBLIC_DOMAIN = r2PublicDomain;
+  }
+
+  const appBaseUrl = readOptional(envSource, "APP_BASE_URL");
+  if (appBaseUrl) {
+    runtimeVars.APP_BASE_URL = appBaseUrl;
+  }
+
+  if (Object.keys(runtimeVars).length > 0) {
+    config.vars = runtimeVars;
+    return;
+  }
+
+  delete config.vars;
 }
 
 function applyRuntimeLimits(config, envSource) {

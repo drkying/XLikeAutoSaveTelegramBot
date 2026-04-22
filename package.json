@@ -10,7 +10,7 @@
     "db:init:local": "npm run cf:config && wrangler d1 migrations apply DB --local --config .wrangler/generated/wrangler.jsonc",
     "db:init:remote": "npm run cf:config && wrangler d1 migrations apply DB --remote --config .wrangler/generated/wrangler.jsonc",
     "build": "npm run cf-typegen && npm run check && npm run db:init:local",
-    "deploy": "npm run build && npm run db:init:remote && npm run cf:config && wrangler deploy --config .wrangler/generated/wrangler.jsonc",
+    "deploy": "npm run build && wrangler deploy --keep-vars --config .wrangler/generated/wrangler.jsonc && node ./scripts/apply-remote-d1-migrations-if-possible.mjs",
     "check": "tsc --noEmit",
     "cf-typegen": "npm run cf:config && wrangler types --config .wrangler/generated/wrangler.jsonc"
   },

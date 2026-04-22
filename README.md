@@ -8,7 +8,7 @@
 
 项目现在把仓库内的 `wrangler.jsonc` 作为无实例信息的模板，实际执行前通过 `npm run cf:config` 生成 `.wrangler/generated/wrangler.jsonc`。这个生成文件在 `.wrangler/` 下，不会进入 git；如果你提供 `CF_*` 环境变量，就会绑定到现有资源，否则使用 Wrangler 自动 provisioning。
 
-`.dev.vars` 仍然主要给 `wrangler dev` 使用；线上环境请用 `wrangler secret put` 和 Cloudflare Dashboard / CI 环境变量配置。
+`.dev.vars` 仍然主要给 `wrangler dev` 使用；线上环境请用 `wrangler secret put` 和 Cloudflare Dashboard / CI 环境变量配置。模板里的 `keep_vars` 已开启，`npm run deploy` 会使用 `wrangler deploy --keep-vars`，这样在没有显式提供 build-time plain-text vars 时，不会把 Dashboard 里已有的运行时变量误覆盖掉。
 
 | 变量 | 必填 | 用途 |
 |---|---|---|
@@ -85,7 +85,7 @@ npm run dev:scheduled
 
 ## 部署
 
-部署前确认生产环境 `APP_BASE_URL` 已通过环境变量或生成配置指向 Worker 域名 / 自定义域名，且 X App Redirect URI 已改成同一地址。
+部署前确认生产环境 `APP_BASE_URL` 已通过环境变量或 Dashboard 运行时变量指向 Worker 域名 / 自定义域名，且 X App Redirect URI 已改成同一地址。
 
 ```bash
 wrangler secret put TELEGRAM_BOT_TOKEN
@@ -94,7 +94,9 @@ wrangler secret put WEBHOOK_SECRET
 npm run deploy
 ```
 
-- `npm run deploy` 会自动先生成有效 Wrangler 配置、执行 `npm run build`、远程 D1 初始化，然后才真正部署。
+- `npm run deploy` 现在会先执行 `npm run build`，再用 `wrangler deploy --keep-vars` 部署，最后只在生成配置里已经拿到 `database_id` 时才自动执行远程 D1 migration。
+- 如果你使用 Cloudflare Git 自动构建，`Settings > Build > Build variables and secrets` 与 Worker 运行时变量是两套东西。`CF_D1_DATABASE_NAME`、`CF_D1_DATABASE_ID`、`CF_KV_ID`、`CF_R2_BUCKET_NAME` 这类会参与生成 Wrangler 绑定配置的值，必须放到 Build variables 里，不能只放在 Worker 运行时变量里。
+- `APP_BASE_URL`、`R2_PUBLIC_DOMAIN`、`WORKERS_PAID_ENABLED` 如果只想继续沿用 Dashboard 当前运行时值，可以不放到 Build variables；如果你希望每次构建时由代码侧覆盖它们，也需要同步放到 Build variables。
 
 部署后设置并校验 Telegram webhook；如果没有启用 `WEBHOOK_SECRET`，去掉 `secret_token` 参数：
 
