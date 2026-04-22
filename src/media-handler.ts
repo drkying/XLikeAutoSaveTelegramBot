@@ -1,4 +1,5 @@
 import type { Env, MediaRecord, MediaStorageStatus } from "./types";
+import { logInfo, logWarn, serializeError } from "./observability";
 
 type R2UploadBody =
   | string
@@ -41,6 +42,13 @@ export async function uploadToR2(
   }
 
   await env.R2.put(key, body, options);
+  logInfo("r2.upload.completed", {
+    key,
+    has_public_url: Boolean(env.R2_PUBLIC_DOMAIN),
+    tweet_id: metadata.tweetId ?? null,
+    media_key: metadata.mediaKey ?? null,
+    media_type: metadata.mediaType ?? null,
+  });
 
   return {
     key,
@@ -86,6 +94,13 @@ export async function processMediaItem(
     const contentType = response.headers.get("content-type") ?? mediaItem.content_type ?? inferContentType(mediaItem);
     const r2Key = options.r2Key ?? buildMediaR2Key(mediaItem, options, contentType);
     const body = response.body ?? await response.arrayBuffer();
+    logInfo("media.process.started", {
+      tweet_id: mediaItem.tweet_id,
+      media_key: mediaItem.media_key ?? null,
+      media_type: mediaItem.media_type,
+      file_size_bytes: fileSize ?? mediaItem.file_size_bytes ?? null,
+      exceeds_telegram_url_limit: exceedsTelegramVideoLimit,
+    });
     const upload = await uploadToR2(env, r2Key, body, contentType, {
       tweetId: mediaItem.tweet_id,
       mediaKey: mediaItem.media_key,
@@ -104,6 +119,12 @@ export async function processMediaItem(
           : resolveSuccessStatus(mediaItem),
     };
   } catch {
+    logWarn("media.process.failed", {
+      tweet_id: mediaItem.tweet_id,
+      media_key: mediaItem.media_key ?? null,
+      media_type: mediaItem.media_type,
+      source_url: mediaItem.x_original_url,
+    });
     return {
       ...mediaItem,
       storage_status: resolveFailureStatus(mediaItem),
@@ -156,9 +177,19 @@ async function fetchMediaWithRetry(
       await sleep(getRetryDelayMs(response, attempt));
     } catch (error) {
       if (attempt > maxRetries) {
+        logWarn("media.fetch.failed", {
+          url,
+          attempt,
+          ...serializeError(error),
+        });
         throw error;
       }
 
+      logWarn("media.fetch.retrying", {
+        url,
+        attempt,
+        ...serializeError(error),
+      });
       await sleep(Math.min(500 * (2 ** (attempt - 1)), 8_000));
     }
   }

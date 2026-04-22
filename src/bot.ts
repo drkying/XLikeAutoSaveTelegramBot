@@ -1,5 +1,6 @@
 import { Bot, webhookCallback } from "grammy";
 import { createDatabase } from "./db";
+import { logError, logInfo, serializeError } from "./observability";
 import { notifyAdmin } from "./sender";
 import { registerAccountsCommand } from "./commands/accounts";
 import { registerConvertCommand } from "./commands/convert";
@@ -65,6 +66,9 @@ export function getBot(env: Env): Bot {
   });
 
   bot.catch(async (error) => {
+    logError("bot.update.failed", {
+      ...serializeError(error.error),
+    });
     await notifyAdmin(
       env,
       `Bot update handling failed: ${error.error instanceof Error ? error.error.message : "unknown error"}`,
@@ -81,12 +85,17 @@ export function createWebhookHandler(env: Env) {
 
   return async (request: Request) => {
     if (!botInitPromise) {
+      logInfo("bot.init.started");
       botInitPromise = bot.init().catch((error) => {
         botInitPromise = null;
+        logError("bot.init.failed", {
+          ...serializeError(error),
+        });
         throw error;
       });
     }
     await botInitPromise;
+    logInfo("bot.webhook.dispatch");
     return callback(request);
   };
 }

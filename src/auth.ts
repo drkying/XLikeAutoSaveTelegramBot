@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { Database, createDatabase } from "./db";
 import { KVStore } from "./kv-store";
+import { logError, logInfo, serializeError } from "./observability";
 import { notifyUser } from "./sender";
 import type { AuthState, Env } from "./types";
 import {
@@ -10,7 +11,13 @@ import {
   getUserMe,
 } from "./twitter-api";
 
-type HonoContext = Context<{ Bindings: Env }>;
+type AuthHonoContext = Context<{
+  Bindings: Env;
+  Variables: {
+    requestId: string;
+    requestStartedAt: number;
+  };
+}>;
 
 function getCallbackUrl(env: Env): string {
   return `${env.APP_BASE_URL.replace(/\/$/, "")}/auth/callback`;
@@ -110,27 +117,47 @@ async function completeAuthCallback(
   };
 }
 
-export async function handleAuthLogin(c: HonoContext): Promise<Response> {
+export async function handleAuthLogin(c: AuthHonoContext): Promise<Response> {
+  const requestId = c.get("requestId");
   const chatIdRaw = c.req.query("chat_id");
   if (!chatIdRaw) {
+    logInfo("auth.login.invalid_request", {
+      request_id: requestId,
+      reason: "missing_chat_id",
+    });
     return c.text("Missing chat_id query parameter.", 400);
   }
 
   const chatId = Number(chatIdRaw);
   if (!Number.isSafeInteger(chatId)) {
+    logInfo("auth.login.invalid_request", {
+      request_id: requestId,
+      reason: "invalid_chat_id",
+      chat_id_raw: chatIdRaw,
+    });
     return c.text("Invalid chat_id.", 400);
   }
 
   try {
     const authUrl = await createAuthLink(c.env, chatId);
+    logInfo("auth.login.created", {
+      request_id: requestId,
+      chat_id: chatId,
+    });
     return c.redirect(authUrl, 302);
   } catch (error) {
+    logError("auth.login.failed", {
+      request_id: requestId,
+      chat_id: chatId,
+      ...serializeError(error),
+    });
     const message = error instanceof Error ? error.message : "Unable to create auth link.";
     return c.html(htmlPage("Login unavailable", message), 400);
   }
 }
 
-export async function handleAuthCallback(c: HonoContext): Promise<Response> {
+export async function handleAuthCallback(c: AuthHonoContext): Promise<Response> {
+  const requestId = c.get("requestId");
   const state = c.req.query("state");
   const code = c.req.query("code");
   const errorCode = c.req.query("error");
@@ -139,6 +166,12 @@ export async function handleAuthCallback(c: HonoContext): Promise<Response> {
   const db = createDatabase(c.env);
 
   if (errorCode) {
+    logInfo("auth.callback.denied", {
+      request_id: requestId,
+      state,
+      error_code: errorCode,
+      error_description: errorDescription,
+    });
     return c.html(
       htmlPage("Authorization failed", errorDescription ?? errorCode),
       400,
@@ -146,11 +179,20 @@ export async function handleAuthCallback(c: HonoContext): Promise<Response> {
   }
 
   if (!state || !code) {
+    logInfo("auth.callback.invalid_request", {
+      request_id: requestId,
+      has_state: Boolean(state),
+      has_code: Boolean(code),
+    });
     return c.html(htmlPage("Invalid callback", "Missing state or code."), 400);
   }
 
   const authState = await kv.getAuthState(state);
   if (!authState) {
+    logInfo("auth.callback.state_missing", {
+      request_id: requestId,
+      state,
+    });
     return c.html(htmlPage("State expired", "Please run /login again."), 400);
   }
 
@@ -158,6 +200,13 @@ export async function handleAuthCallback(c: HonoContext): Promise<Response> {
 
   try {
     const result = await completeAuthCallback(c.env, db, authState, code);
+    logInfo("auth.callback.completed", {
+      request_id: requestId,
+      state,
+      chat_id: authState.telegram_chat_id,
+      account_id: result.accountId,
+      username: result.username,
+    });
     await notifyUser(
       c.env,
       authState.telegram_chat_id,
@@ -170,6 +219,12 @@ export async function handleAuthCallback(c: HonoContext): Promise<Response> {
       ),
     );
   } catch (error) {
+    logError("auth.callback.failed", {
+      request_id: requestId,
+      state,
+      chat_id: authState.telegram_chat_id,
+      ...serializeError(error),
+    });
     const message = error instanceof Error ? error.message : "Unexpected callback failure.";
     await notifyUser(
       c.env,

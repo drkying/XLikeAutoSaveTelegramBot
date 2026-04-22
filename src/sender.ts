@@ -1,4 +1,5 @@
 import type { Env, MediaRecord } from "./types";
+import { logInfo, logWarn, serializeError } from "./observability";
 
 interface TelegramApiResponse<T> {
   ok: boolean;
@@ -119,12 +120,25 @@ async function callTelegramApi<T>(
         return body.result;
       }
 
+      logWarn("telegram.api.response_not_ok", {
+        method,
+        attempt: attempt + 1,
+        status: response.status,
+        description: body.description,
+      });
+
       throw new Error(body.description ?? `Telegram API ${method} failed with ${response.status}`);
     } catch (error) {
       lastError = error;
       if (attempt === retries - 1) {
         break;
       }
+      logWarn("telegram.api.retrying", {
+        method,
+        attempt: attempt + 1,
+        max_retries: retries,
+        ...serializeError(error),
+      });
       await wait(250 * 2 ** attempt);
     }
   }
@@ -153,12 +167,25 @@ async function callTelegramApiStream<T>(
         return body.result;
       }
 
+      logWarn("telegram.api.stream_response_not_ok", {
+        method,
+        attempt: attempt + 1,
+        status: response.status,
+        description: body.description,
+      });
+
       throw new Error(body.description ?? `Telegram API ${method} failed with ${response.status}`);
     } catch (error) {
       lastError = error;
       if (attempt === retries - 1) {
         break;
       }
+      logWarn("telegram.api.stream_retrying", {
+        method,
+        attempt: attempt + 1,
+        max_retries: retries,
+        ...serializeError(error),
+      });
       await wait(250 * 2 ** attempt);
     }
   }
@@ -321,6 +348,12 @@ export async function sendMediaRecord(
       (isHttpUrl(source) ? await probeRemoteFileSize(source) : null);
 
     if (isHttpUrl(source) && fileSizeBytes !== null && fileSizeBytes > TELEGRAM_URL_VIDEO_LIMIT_BYTES) {
+      logInfo("telegram.video.large_stream_upload", {
+        chat_id: chatId,
+        media_id: media.id,
+        tweet_id: media.tweet_id,
+        file_size_bytes: fileSizeBytes,
+      });
       message = await sendLargeVideoViaStream(env, chatId, source, caption);
     } else {
       message = await callTelegramApi<TelegramMessage>(env, "sendVideo", {
@@ -344,6 +377,11 @@ async function sendMediaGroup(
   caption: string,
   mediaItems: MediaRecord[],
 ): Promise<SentMediaResult[]> {
+  logInfo("telegram.media_group.sending", {
+    chat_id: chatId,
+    media_count: mediaItems.length,
+    tweet_id: mediaItems[0]?.tweet_id ?? null,
+  });
   const payload = mediaItems.map((media, index) => {
     const source = getPreferredMediaSource(media);
     if (!source) {

@@ -82,6 +82,7 @@ curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo"
 
 - X API 没有免费层，先预充值 credits，并至少每周检查一次余额和调用量。
 - 上线初期保持较大的 `poll_interval_min` 和有限轮询时段，先确认真实单账号成本再放开。
+- 项目已输出结构化 observability 日志到 Cloudflare Workers logs，关键链路会带 `request_id`、`job_id`、`poll_id` 等字段，建议结合 `wrangler tail` 和 Dashboard 检索。
 - `ADMIN_CHAT_ID` 建议始终配置，结合 `wrangler tail` 和 Cloudflare Dashboard 观察 Workers CPU、Cron、D1、KV、R2 的错误与用量。
 - Workers 免费层 CPU 预算很紧；高频轮询或媒体较多时，先监控再决定是否真的启用付费方案。
 - 每月检查 D1 数据量、R2 存储量、`x_only` / `failed` 媒体占比，以及 refresh token 失效率；异常用户需要重新 `/login`。

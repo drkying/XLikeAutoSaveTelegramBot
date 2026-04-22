@@ -1,6 +1,7 @@
 import { createDatabase } from "./db";
 import { KVStore } from "./kv-store";
 import { processMediaItem } from "./media-handler";
+import { createCorrelationId, logError, logInfo, logWarn, serializeError } from "./observability";
 import { extractMedia, tweetToMarkdown } from "./processor";
 import { notifyAdmin, notifyUser, sendTweetMessage } from "./sender";
 import { ensureValidToken, getLikedTweets, XApiError } from "./twitter-api";
@@ -55,7 +56,20 @@ async function persistTweetMedia(
   let sentResults: Array<{ mediaId?: number; fileId?: string | null }> = [];
   try {
     sentResults = await sendTweetMessage(env, account.telegram_chat_id, tweet.text_markdown ?? "", mediaItems);
+    logInfo("poller.telegram_send.completed", {
+      account_id: account.account_id,
+      username: account.username,
+      tweet_id: tweet.tweet_id,
+      media_count: mediaItems.length,
+      sent_result_count: sentResults.length,
+    });
   } catch (error) {
+    logError("poller.telegram_send.failed", {
+      account_id: account.account_id,
+      username: account.username,
+      tweet_id: tweet.tweet_id,
+      ...serializeError(error),
+    });
     await notifyAdmin(
       env,
       `Telegram send failed for tweet ${tweet.tweet_id} on account @${account.username}: ${
@@ -114,6 +128,12 @@ async function persistTweetMedia(
     .filter((value): value is string => Boolean(value));
 
   if (fallbackLinks.length > 0) {
+    logWarn("poller.media_fallback_links", {
+      account_id: account.account_id,
+      username: account.username,
+      tweet_id: tweet.tweet_id,
+      fallback_count: fallbackLinks.length,
+    });
     await notifyUser(
       env,
       account.telegram_chat_id,
@@ -148,6 +168,12 @@ async function handleTweet(
     liked_at: new Date().toISOString(),
     tweet_created_at: tweet.created_at ?? null,
     has_media: extractedMedia.length > 0 ? 1 : 0,
+    media_count: extractedMedia.length,
+  });
+  logInfo("poller.tweet.persisted", {
+    account_id: account.account_id,
+    username: account.username,
+    tweet_id: tweet.id,
     media_count: extractedMedia.length,
   });
 
@@ -189,14 +215,26 @@ async function getAuthorizedAccount(env: Env, account: AccountData): Promise<{
 }
 
 export async function pollAccount(env: Env, account: AccountData): Promise<void> {
+  const pollId = createCorrelationId("poll");
+  const startedAt = Date.now();
   const db = createDatabase(env);
   const kv = new KVStore(env);
   const acquired = await kv.acquirePollingLock(account.account_id, 120);
   if (!acquired) {
+    logWarn("poller.account.locked", {
+      poll_id: pollId,
+      account_id: account.account_id,
+      username: account.username,
+    });
     return;
   }
 
   try {
+    logInfo("poller.account.started", {
+      poll_id: pollId,
+      account_id: account.account_id,
+      username: account.username,
+    });
     const { account: authorizedAccount, user } = await getAuthorizedAccount(env, account);
     const response = await getLikedTweets(authorizedAccount.account_id, authorizedAccount.access_token, {
       sinceId: authorizedAccount.last_tweet_id,
@@ -215,7 +253,22 @@ export async function pollAccount(env: Env, account: AccountData): Promise<void>
       authorizedAccount.account_id,
       response.meta?.newest_id ?? authorizedAccount.last_tweet_id ?? null,
     );
+    logInfo("poller.account.completed", {
+      poll_id: pollId,
+      account_id: authorizedAccount.account_id,
+      username: authorizedAccount.username,
+      tweet_count: tweets.length,
+      newest_id: response.meta?.newest_id ?? null,
+      duration_ms: Date.now() - startedAt,
+    });
   } catch (error) {
+    logError("poller.account.failed", {
+      poll_id: pollId,
+      account_id: account.account_id,
+      username: account.username,
+      duration_ms: Date.now() - startedAt,
+      ...serializeError(error),
+    });
     if (error instanceof XApiError && (error.status === 401 || error.status === 403)) {
       await notifyUser(
         env,
@@ -235,14 +288,26 @@ export async function pollAccount(env: Env, account: AccountData): Promise<void>
   }
 }
 
-export async function pollAllAccounts(env: Env): Promise<void> {
+export async function pollAllAccounts(env: Env, options: { jobId?: string } = {}): Promise<void> {
+  const jobId = options.jobId ?? createCorrelationId("pollrun");
   const db = createDatabase(env);
   const accounts = await db.listActiveAccounts();
+  let eligibleCount = 0;
 
+  logInfo("poller.run.started", {
+    job_id: jobId,
+    active_account_count: accounts.length,
+  });
   for (const account of accounts) {
     if (!shouldPollAccount(account)) {
       continue;
     }
+    eligibleCount += 1;
     await pollAccount(env, account);
   }
+  logInfo("poller.run.completed", {
+    job_id: jobId,
+    active_account_count: accounts.length,
+    eligible_account_count: eligibleCount,
+  });
 }

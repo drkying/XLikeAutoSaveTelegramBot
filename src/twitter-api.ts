@@ -1,4 +1,5 @@
 import type { Database } from "./db";
+import { logInfo, logWarn, serializeError } from "./observability";
 import type {
   AccountData,
   UserData,
@@ -184,6 +185,11 @@ export async function ensureValidToken(
     );
   }
 
+  logInfo("x.token.refresh_required", {
+    account_id: account.account_id,
+    username: account.username,
+    expires_at: account.token_expires_at,
+  });
   return refreshAccountAccessToken(account, user, db);
 }
 
@@ -360,6 +366,13 @@ async function fetchWithRetry(
         !shouldRetryStatus(response.status, options.retryOnAuthErrors)
       ) {
         const payload = await readErrorPayload(response);
+        logWarn("x.api.request_failed", {
+          url,
+          method: init.method ?? "GET",
+          attempt,
+          status: response.status,
+          payload,
+        });
         throw new XApiError(
           buildErrorMessage(response.status, payload),
           response.status,
@@ -367,6 +380,12 @@ async function fetchWithRetry(
         );
       }
 
+      logWarn("x.api.retrying", {
+        url,
+        method: init.method ?? "GET",
+        attempt,
+        status: response.status,
+      });
       await sleep(getRetryDelayMs(response, attempt));
     } catch (error) {
       if (error instanceof XApiError) {
@@ -375,9 +394,21 @@ async function fetchWithRetry(
 
       if (attempt > options.maxRetries) {
         const message = error instanceof Error ? error.message : "Network request to X API failed.";
+        logWarn("x.api.network_failed", {
+          url,
+          method: init.method ?? "GET",
+          attempt,
+          ...serializeError(error),
+        });
         throw new XApiError(message);
       }
 
+      logWarn("x.api.network_retrying", {
+        url,
+        method: init.method ?? "GET",
+        attempt,
+        ...serializeError(error),
+      });
       await sleep(getNetworkRetryDelayMs(attempt));
     }
   }
@@ -407,6 +438,11 @@ async function refreshAccountAccessToken(
   });
 
   Object.assign(account, nextAccount);
+  logInfo("x.token.refreshed", {
+    account_id: account.account_id,
+    username: account.username,
+    token_expires_at: nextAccount.token_expires_at,
+  });
   return updated ?? nextAccount;
 }
 

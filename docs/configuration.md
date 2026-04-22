@@ -293,6 +293,21 @@ npm run deploy
 
 ## 15. 运维建议
 
+当前项目已开启 `wrangler.toml` 中的：
+
+```toml
+[observability.logs]
+enabled = true
+```
+
+同时代码会输出结构化 JSON 日志，常见字段包括：
+
+- `request_id`：HTTP 请求级关联 ID
+- `job_id`：Cron 任务级关联 ID
+- `poll_id`：单账号轮询关联 ID
+- `account_id` / `tweet_id` / `chat_id`
+- `duration_ms`
+
 至少定期检查这些内容：
 
 - X API credits 余额和消耗速率
