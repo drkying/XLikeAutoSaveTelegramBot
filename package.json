@@ -1,0 +1,22 @@
+{
+  "name": "x-like-auto-save-telegram-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "dev:scheduled": "wrangler dev --test-scheduled",
+    "deploy": "wrangler deploy",
+    "check": "tsc --noEmit",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "grammy": "^1.38.2",
+    "hono": "^4.9.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250906.0",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.20.0"
+  }
+}

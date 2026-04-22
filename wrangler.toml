@@ -1,0 +1,30 @@
+name = "x-like-save-bot"
+main = "src/index.ts"
+compatibility_date = "2026-04-22"
+compatibility_flags = ["nodejs_compat"]
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[kv_namespaces]]
+binding = "KV"
+id = "<KV_ID>"
+preview_id = "<KV_PREVIEW_ID>"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "CF_D1_DATABASE_NAME_REMOVED"
+database_id = "<D1_ID>"
+preview_database_id = "<D1_PREVIEW_ID>"
+
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "CF_R2_BUCKET_NAME_REMOVED"
+
+[vars]
+WORKERS_PAID_ENABLED = "false"
+R2_PUBLIC_DOMAIN = ""
+APP_BASE_URL = "http://localhost:8787"
+
+[observability.logs]
+enabled = true
