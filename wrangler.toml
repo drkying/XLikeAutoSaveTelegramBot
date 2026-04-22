@@ -1,4 +1,4 @@
-name = "x-like-save-bot"
+name = "x-like-autosave-telegram-bot"
 main = "src/index.ts"
 compatibility_date = "2026-04-22"
 compatibility_flags = ["nodejs_compat"]
