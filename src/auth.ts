@@ -1,6 +1,8 @@
 import type { Context } from "hono";
 import { Database, createDatabase } from "./db";
+import { DEFAULT_LANGUAGE, t, type Language } from "./i18n";
 import { KVStore } from "./kv-store";
+import { getUserLanguage } from "./language-store";
 import { logError, logInfo, serializeError } from "./observability";
 import { notifyUser } from "./sender";
 import type { AuthState, Env } from "./types";
@@ -23,9 +25,9 @@ function getCallbackUrl(env: Env): string {
   return `${env.APP_BASE_URL.replace(/\/$/, "")}/auth/callback`;
 }
 
-function htmlPage(title: string, message: string): string {
+function htmlPage(language: Language, title: string, message: string): string {
   return `<!doctype html>
-<html lang="en">
+<html lang="${language === "zh" ? "zh-CN" : "en"}">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -55,12 +57,13 @@ interface AuthCredentialContext {
 async function resolveAuthCredentialContext(
   db: Database,
   telegramChatId: number,
+  language: Language,
   targetAccountId?: string,
 ): Promise<AuthCredentialContext> {
   if (targetAccountId) {
     const account = await db.getAccount(targetAccountId);
     if (!account || account.telegram_chat_id !== telegramChatId) {
-      throw new Error("Target X account was not found.");
+      throw new Error(t(language, "auth_target_account_not_found"));
     }
 
     const fallbackUser = (!account.x_client_id || !account.x_client_secret)
@@ -69,7 +72,10 @@ async function resolveAuthCredentialContext(
     const clientId = account.x_client_id ?? fallbackUser?.x_client_id;
     const clientSecret = account.x_client_secret ?? fallbackUser?.x_client_secret;
     if (!clientId || !clientSecret) {
-      throw new Error(`X account @${account.username} has no saved API credentials. Run /setup ${account.account_id}.`);
+      throw new Error(t(language, "auth_account_missing_credentials", {
+        username: account.username,
+        accountId: account.account_id,
+      }));
     }
 
     return {
@@ -81,7 +87,7 @@ async function resolveAuthCredentialContext(
 
   const user = await db.getUser(telegramChatId);
   if (!user) {
-    throw new Error("User has not completed /setup yet.");
+    throw new Error(t(language, "auth_user_not_setup"));
   }
 
   return {
@@ -98,7 +104,8 @@ export async function createAuthLink(
 ): Promise<string> {
   const db = createDatabase(env);
   const kv = new KVStore(env);
-  const authContext = await resolveAuthCredentialContext(db, telegramChatId, options.accountId);
+  const language = await getUserLanguage(env, telegramChatId);
+  const authContext = await resolveAuthCredentialContext(db, telegramChatId, language, options.accountId);
 
   const pkce = await generatePKCE();
   const state = crypto.randomUUID();
@@ -126,6 +133,7 @@ async function completeAuthCallback(
   db: Database,
   authState: AuthState,
   code: string,
+  language: Language,
 ): Promise<{ username: string; accountId: string }> {
   const token = await exchangeCodeForToken({
     code,
@@ -137,7 +145,9 @@ async function completeAuthCallback(
 
   const me = await getUserMe(token.access_token);
   if (authState.expected_account_id && authState.expected_account_id !== me.id) {
-    throw new Error(`Authenticated X account @${me.username} does not match the requested account.`);
+    throw new Error(t(language, "auth_account_mismatch", {
+      username: me.username,
+    }));
   }
   const expiresAt = Math.floor(Date.now() / 1000) + token.expires_in;
 
@@ -174,7 +184,7 @@ export async function handleAuthLogin(c: AuthHonoContext): Promise<Response> {
       request_id: requestId,
       reason: "missing_chat_id",
     });
-    return c.text("Missing chat_id query parameter.", 400);
+    return c.text(t(DEFAULT_LANGUAGE, "auth_missing_chat_id"), 400);
   }
 
   const chatId = Number(chatIdRaw);
@@ -184,8 +194,10 @@ export async function handleAuthLogin(c: AuthHonoContext): Promise<Response> {
       reason: "invalid_chat_id",
       chat_id_raw: chatIdRaw,
     });
-    return c.text("Invalid chat_id.", 400);
+    return c.text(t(DEFAULT_LANGUAGE, "auth_invalid_chat_id"), 400);
   }
+
+  const language = await getUserLanguage(c.env, chatId);
 
   try {
     const authUrl = await createAuthLink(c.env, chatId, { accountId });
@@ -202,8 +214,8 @@ export async function handleAuthLogin(c: AuthHonoContext): Promise<Response> {
       account_id: accountId ?? null,
       ...serializeError(error),
     });
-    const message = error instanceof Error ? error.message : "Unable to create auth link.";
-    return c.html(htmlPage("Login unavailable", message), 400);
+    const message = error instanceof Error ? error.message : t(language, "auth_unable_create_link");
+    return c.html(htmlPage(language, t(language, "auth_login_unavailable_title"), message), 400);
   }
 }
 
@@ -217,6 +229,10 @@ export async function handleAuthCallback(c: AuthHonoContext): Promise<Response> 
   const db = createDatabase(c.env);
 
   if (errorCode) {
+    const authStateForError = state ? await kv.getAuthState(state) : null;
+    const language = authStateForError
+      ? await getUserLanguage(c.env, authStateForError.telegram_chat_id)
+      : DEFAULT_LANGUAGE;
     logInfo("auth.callback.denied", {
       request_id: requestId,
       state,
@@ -224,7 +240,11 @@ export async function handleAuthCallback(c: AuthHonoContext): Promise<Response> 
       error_description: errorDescription,
     });
     return c.html(
-      htmlPage("Authorization failed", errorDescription ?? errorCode),
+      htmlPage(
+        language,
+        t(language, "auth_authorization_failed_title"),
+        errorDescription ?? errorCode,
+      ),
       400,
     );
   }
@@ -235,7 +255,14 @@ export async function handleAuthCallback(c: AuthHonoContext): Promise<Response> 
       has_state: Boolean(state),
       has_code: Boolean(code),
     });
-    return c.html(htmlPage("Invalid callback", "Missing state or code."), 400);
+    return c.html(
+      htmlPage(
+        DEFAULT_LANGUAGE,
+        t(DEFAULT_LANGUAGE, "auth_invalid_callback_title"),
+        t(DEFAULT_LANGUAGE, "auth_missing_state_or_code"),
+      ),
+      400,
+    );
   }
 
   const authState = await kv.getAuthState(state);
@@ -244,13 +271,21 @@ export async function handleAuthCallback(c: AuthHonoContext): Promise<Response> 
       request_id: requestId,
       state,
     });
-    return c.html(htmlPage("State expired", "Please run /login again."), 400);
+    return c.html(
+      htmlPage(
+        DEFAULT_LANGUAGE,
+        t(DEFAULT_LANGUAGE, "auth_state_expired_title"),
+        t(DEFAULT_LANGUAGE, "auth_state_expired_message"),
+      ),
+      400,
+    );
   }
 
   await kv.deleteAuthState(state);
+  const language = await getUserLanguage(c.env, authState.telegram_chat_id);
 
   try {
-    const result = await completeAuthCallback(c.env, db, authState, code);
+    const result = await completeAuthCallback(c.env, db, authState, code, language);
     logInfo("auth.callback.completed", {
       request_id: requestId,
       state,
@@ -261,12 +296,17 @@ export async function handleAuthCallback(c: AuthHonoContext): Promise<Response> 
     await notifyUser(
       c.env,
       authState.telegram_chat_id,
-      `X account @${result.username} connected successfully. Polling is enabled by default.`,
+      t(language, "auth_connected_notification", {
+        username: result.username,
+      }),
     );
     return c.html(
       htmlPage(
-        "Login completed",
-        `Your X account @${result.username} has been connected. You can return to Telegram now.`,
+        language,
+        t(language, "auth_login_completed_title"),
+        t(language, "auth_connected_page", {
+          username: result.username,
+        }),
       ),
     );
   } catch (error) {
@@ -276,12 +316,14 @@ export async function handleAuthCallback(c: AuthHonoContext): Promise<Response> 
       chat_id: authState.telegram_chat_id,
       ...serializeError(error),
     });
-    const message = error instanceof Error ? error.message : "Unexpected callback failure.";
+    const message = error instanceof Error ? error.message : t(language, "auth_unexpected_callback_failure");
     await notifyUser(
       c.env,
       authState.telegram_chat_id,
-      `X login failed: ${message}`,
+      t(language, "auth_failed_notification", {
+        message,
+      }),
     );
-    return c.html(htmlPage("Login failed", message), 400);
+    return c.html(htmlPage(language, t(language, "auth_login_failed_title"), message), 400);
   }
 }

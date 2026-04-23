@@ -1,16 +1,27 @@
 import { Bot, webhookCallback } from "grammy";
 import { createDatabase } from "./db";
+import { resolveMenuAction, t } from "./i18n";
 import { logError, logInfo, serializeError } from "./observability";
 import { notifyAdmin } from "./sender";
 import { registerAccountsCommand } from "./commands/accounts";
+import { handleAccountsCommand } from "./commands/accounts";
 import { registerConvertCommand } from "./commands/convert";
+import { handleConvertCommand } from "./commands/convert";
+import { registerLanguageCommand } from "./commands/language";
+import { handleLanguageCommand } from "./commands/language";
 import { registerLoginCommand } from "./commands/login";
+import { handleLoginCommand } from "./commands/login";
 import { registerPollingCommand } from "./commands/polling";
+import { handlePollingCommand } from "./commands/polling";
 import { registerRemoveCommand } from "./commands/remove";
 import { registerSetupCommand, handleSetupConversation } from "./commands/setup";
+import { handleSetupCommand } from "./commands/setup";
 import { registerStartCommand } from "./commands/start";
+import { handleStartCommand } from "./commands/start";
 import { registerStatusCommand } from "./commands/status";
+import { handleStatusCommand } from "./commands/status";
 import { getKnownCommands, registerUiCallbacks, syncBotCommands } from "./commands/ui";
+import { getUserLanguage } from "./language-store";
 import type { Env } from "./types";
 
 let botInstance: Bot | null = null;
@@ -28,7 +39,7 @@ export function getBot(env: Env): Bot {
   };
   const knownCommands = getKnownCommands();
 
-  registerStartCommand(bot);
+  registerStartCommand(bot, deps);
   registerSetupCommand(bot, deps);
   registerLoginCommand(bot, deps);
   registerAccountsCommand(bot, deps);
@@ -36,6 +47,7 @@ export function getBot(env: Env): Bot {
   registerPollingCommand(bot, deps);
   registerConvertCommand(bot, deps);
   registerStatusCommand(bot, deps);
+  registerLanguageCommand(bot, deps);
   registerUiCallbacks(bot, deps);
 
   bot.on("message:text", async (ctx) => {
@@ -45,12 +57,31 @@ export function getBot(env: Env): Bot {
 
     const text = ctx.message.text.trim();
     if (!text.startsWith("/")) {
+      const action = resolveMenuAction(text);
+      if (action === "start") {
+        await handleStartCommand(ctx, deps);
+      } else if (action === "accounts") {
+        await handleAccountsCommand(ctx, deps);
+      } else if (action === "polling") {
+        await handlePollingCommand(ctx, deps, "/polling");
+      } else if (action === "status") {
+        await handleStatusCommand(ctx, deps);
+      } else if (action === "login") {
+        await handleLoginCommand(ctx, deps, "/login");
+      } else if (action === "setup") {
+        await handleSetupCommand(ctx, deps, "/setup");
+      } else if (action === "convert_all") {
+        await handleConvertCommand(ctx, deps, "/convert all");
+      } else if (action === "language") {
+        await handleLanguageCommand(ctx, deps, "/language");
+      }
       return;
     }
 
     const command = text.split(/\s+/)[0].split("@")[0];
     if (!knownCommands.has(command)) {
-      await ctx.reply("Unknown command. Run /start to see the supported commands.");
+      const language = await getUserLanguage(env, ctx.chat?.id);
+      await ctx.reply(t(language, "error_unknown_command"));
     }
   });
 

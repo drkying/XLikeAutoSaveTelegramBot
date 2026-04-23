@@ -1,4 +1,6 @@
-import type { Bot } from "grammy";
+import type { Bot, Context } from "grammy";
+import { t } from "../i18n";
+import { getUserLanguage } from "../language-store";
 import { processMediaItem } from "../media-handler";
 import { sendMediaRecord } from "../sender";
 import type { MediaRecord, MediaStorageStatus } from "../types";
@@ -68,59 +70,71 @@ async function convertMedia(
   return normalizeConvertStatus(saved?.storage_status);
 }
 
+export async function handleConvertCommand(
+  ctx: Context,
+  deps: CommandDependencies,
+  inputText = ctx.message?.text,
+): Promise<void> {
+  const chatId = getChatId(ctx);
+  if (!chatId) {
+    return;
+  }
+
+  const language = await getUserLanguage(deps.env, chatId);
+  const [target] = getCommandArgs(inputText);
+  if (!target) {
+    await ctx.reply(t(language, "convert_usage"));
+    return;
+  }
+
+  let mediaItems: MediaRecord[] = [];
+  if (target === "all") {
+    mediaItems = await deps.db.listMediaByStatus("x_only", chatId, 100);
+  } else {
+    const tweet = await deps.db.getTweet(target);
+    if (!tweet) {
+      await ctx.reply(t(language, "convert_tweet_not_found"));
+      return;
+    }
+
+    const account = await deps.db.getAccount(tweet.account_id);
+    if (!account || account.telegram_chat_id !== chatId) {
+      await ctx.reply(t(language, "convert_tweet_not_owned"));
+      return;
+    }
+
+    mediaItems = (await deps.db.getMediaByTweet(tweet.tweet_id)).filter(
+      (media) => media.storage_status === "x_only",
+    );
+  }
+
+  if (mediaItems.length === 0) {
+    await ctx.reply(t(language, "convert_no_items"));
+    return;
+  }
+
+  const summary = {
+    telegram: 0,
+    r2: 0,
+    x_only: 0,
+    failed: 0,
+  };
+
+  for (const media of mediaItems) {
+    const result = await convertMedia(deps, chatId, media);
+    summary[result] += 1;
+  }
+
+  await ctx.reply(t(language, "convert_finished", {
+    telegram: summary.telegram,
+    r2: summary.r2,
+    xOnly: summary.x_only,
+    failed: summary.failed,
+  }));
+}
+
 export function registerConvertCommand(bot: Bot, deps: CommandDependencies): void {
   bot.command("convert", async (ctx) => {
-    const chatId = getChatId(ctx);
-    if (!chatId) {
-      return;
-    }
-
-    const [target] = getCommandArgs(ctx.message?.text);
-    if (!target) {
-      await ctx.reply("Usage: /convert <tweet_id|all>");
-      return;
-    }
-
-    let mediaItems: MediaRecord[] = [];
-    if (target === "all") {
-      mediaItems = await deps.db.listMediaByStatus("x_only", chatId, 100);
-    } else {
-      const tweet = await deps.db.getTweet(target);
-      if (!tweet) {
-        await ctx.reply("Tweet not found.");
-        return;
-      }
-
-      const account = await deps.db.getAccount(tweet.account_id);
-      if (!account || account.telegram_chat_id !== chatId) {
-        await ctx.reply("Tweet does not belong to one of your accounts.");
-        return;
-      }
-
-      mediaItems = (await deps.db.getMediaByTweet(tweet.tweet_id)).filter(
-        (media) => media.storage_status === "x_only",
-      );
-    }
-
-    if (mediaItems.length === 0) {
-      await ctx.reply("No x_only media items matched your request.");
-      return;
-    }
-
-    const summary = {
-      telegram: 0,
-      r2: 0,
-      x_only: 0,
-      failed: 0,
-    };
-
-    for (const media of mediaItems) {
-      const result = await convertMedia(deps, chatId, media);
-      summary[result] += 1;
-    }
-
-    await ctx.reply(
-      `Convert finished.\ntelegram: ${summary.telegram}\nr2: ${summary.r2}\nx_only: ${summary.x_only}\nfailed: ${summary.failed}`,
-    );
+    await handleConvertCommand(ctx, deps);
   });
 }

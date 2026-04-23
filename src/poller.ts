@@ -1,5 +1,7 @@
 import { createDatabase } from "./db";
+import { t } from "./i18n";
 import { KVStore } from "./kv-store";
+import { getUserLanguage } from "./language-store";
 import { ensureMediaStoredInR2, processMediaItem } from "./media-handler";
 import { createCorrelationId, logError, logInfo, logWarn, serializeError } from "./observability";
 import { buildTweetFallbackMarkdown, extractMedia, tweetToMarkdown } from "./processor";
@@ -94,6 +96,7 @@ async function persistTweetMedia(
   account: AccountData,
   tweet: TweetRecord,
   mediaItems: MediaRecord[],
+  language: Awaited<ReturnType<typeof getUserLanguage>>,
 ): Promise<void> {
   const db = createDatabase(env);
   const preparedMedia: MediaRecord[] = [];
@@ -149,7 +152,7 @@ async function persistTweetMedia(
       await sendTweetMessage(
         env,
         account.telegram_chat_id,
-        buildTweetFallbackMarkdown(tweet.text_markdown ?? "", sendableFallbackMedia),
+        buildTweetFallbackMarkdown(tweet.text_markdown ?? "", sendableFallbackMedia, language),
         [],
       );
       sentFallbackMessage = true;
@@ -241,13 +244,14 @@ async function handleTweet(
   includes: Awaited<ReturnType<typeof getLikedTweets>>["includes"],
 ): Promise<void> {
   const db = createDatabase(env);
+  const language = await getUserLanguage(env, account.telegram_chat_id);
   const existing = await db.getTweet(tweet.id);
   if (existing) {
     return;
   }
 
   const author = await db.upsertAuthor(getTweetAuthor(tweet, includes));
-  const markdown = tweetToMarkdown(tweet, includes);
+  const markdown = tweetToMarkdown(tweet, includes, language);
   const extractedMedia = extractMedia(tweet, includes);
 
   const tweetRecord = await db.createTweet({
@@ -286,7 +290,7 @@ async function handleTweet(
     mediaRecords.push(created);
   }
 
-  await persistTweetMedia(env, account, tweetRecord, mediaRecords);
+  await persistTweetMedia(env, account, tweetRecord, mediaRecords, language);
 }
 
 async function getAuthorizedAccount(env: Env, account: AccountData): Promise<{
@@ -365,10 +369,13 @@ export async function pollAccount(env: Env, account: AccountData): Promise<void>
       ...serializeError(error),
     });
     if (error instanceof XApiError && (error.status === 401 || error.status === 403)) {
+      const language = await getUserLanguage(env, account.telegram_chat_id);
       await notifyUser(
         env,
         account.telegram_chat_id,
-        `X account @${account.username} requires re-login. Please run /login again.`,
+        t(language, "poller_relogin_required", {
+          username: account.username,
+        }),
       );
     }
 

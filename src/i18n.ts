@@ -1,0 +1,383 @@
+export type Language = "en" | "zh";
+
+export type MenuAction =
+  | "start"
+  | "accounts"
+  | "polling"
+  | "status"
+  | "login"
+  | "setup"
+  | "convert_all"
+  | "language";
+
+export const DEFAULT_LANGUAGE: Language = "en";
+
+const en = {
+  menu_start: "Start",
+  menu_accounts: "Accounts",
+  menu_polling: "Polling",
+  menu_status: "Status",
+  menu_login: "Login",
+  menu_setup: "Setup",
+  menu_convert_all: "Convert All",
+  menu_language: "Language",
+  quick_actions: "Quick actions:",
+  common_yes: "yes",
+  common_no: "no",
+  common_on: "on",
+  common_off: "off",
+  common_on_upper: "ON",
+  common_off_upper: "OFF",
+  common_never: "never",
+  common_english: "English",
+  common_chinese: "Chinese",
+  start_title: "X Like Auto Save Bot",
+  start_intro: "Type / to use Telegram command autocomplete, or tap the keyboard buttons below for common actions.",
+  start_usage: "Usage:",
+  start_usage_setup_default: "/setup - save default X client credentials for a new account",
+  start_usage_setup_account: "/setup <account_id> - update credentials for one connected account",
+  start_usage_login_default: "/login - connect a new X account",
+  start_usage_login_account: "/login <account_id> - re-authorize one connected X account",
+  start_usage_accounts: "/accounts - list connected accounts",
+  start_usage_polling: "/polling - open the visual polling settings",
+  start_usage_convert: "/convert all - retry x_only media conversion",
+  start_usage_status: "/status - show current bot status",
+  start_usage_language: "/language - change bot language",
+  accounts_empty: "No X accounts connected yet. Run /login first.",
+  accounts_title: "Connected accounts:",
+  accounts_hint: "Use the buttons below to open polling settings or run a manual save.",
+  accounts_manage_button: "Manage @{username}",
+  accounts_save_button: "Save @{username}",
+  accounts_polling_settings_button: "Polling settings",
+  accounts_save_all_active_button: "Save all active",
+  polling_title: "Polling settings:",
+  polling_hint: "Choose an account below to toggle polling, set a preset interval or UTC hour window, or run a manual save.",
+  polling_custom_hint: "For custom values, you can still use /polling interval <account_id> <minutes> and /polling hours <account_id> <start-end>.",
+  polling_account_title: "Polling settings for @{username}:",
+  polling_account_hint: "Use the buttons below to toggle polling, choose a preset interval or UTC hour window, or run a manual save.",
+  polling_toggle_on_button: "Turn polling on",
+  polling_toggle_off_button: "Turn polling off",
+  polling_save_now_button: "Save now",
+  polling_set_interval_button: "Set interval",
+  polling_set_hours_button: "Set hours",
+  polling_back_to_list_button: "Back to list",
+  polling_back_button: "Back",
+  polling_interval_menu_title: "Choose a polling interval for @{username}:",
+  polling_current_interval: "Current interval: {minutes} minutes",
+  polling_interval_custom_hint: "Need a custom value? Use /polling interval {accountId} <minutes> (minimum {minimum}).",
+  polling_hours_menu_title: "Choose polling hours for @{username}:",
+  polling_current_hours: "Current hours: {start}-{end} UTC",
+  polling_hours_custom_hint: "Need a custom window? Use /polling hours {accountId} <start-end>.",
+  polling_enabled: "Polling enabled.",
+  polling_disabled: "Polling disabled.",
+  polling_interval_set: "Interval set to {minutes} min.",
+  polling_hours_set: "Hours set to {start}-{end} UTC.",
+  polling_usage: "Usage: /polling <list|on|off|interval|hours> ...\nRun /polling to open the visual settings menu.",
+  polling_interval_usage: "Usage: /polling interval <account_id> <minutes>, minimum {minimum}.",
+  polling_hours_usage: "Usage: /polling hours <account_id> <start-end>",
+  polling_invalid_hours_example: "Invalid hours. Example: /polling hours 12345 8-22",
+  polling_unknown_action: "Unknown polling action. Use list, on, off, interval, or hours.",
+  status_default_credentials_saved: "Default credentials saved: {value}",
+  status_connected_accounts: "Connected accounts: {count}",
+  status_active_accounts: "Active accounts: {count}",
+  status_account_api_credentials: "Account API credentials: {count}",
+  status_x_only_media: "x_only media: {count}",
+  status_workers_paid_enabled: "Workers paid enabled: {value}",
+  setup_cancelled: "Setup flow cancelled.",
+  setup_account_saved: "API credentials saved for @{username}. Run /login {accountId} when this account needs re-authorization.",
+  setup_default_saved: "Default X client credentials saved. Run /login to connect a new X account.",
+  setup_usage: "Usage: /setup [account_id] [client_id client_secret]",
+  setup_ask_account_client_id: "Send the X Client ID for @{username} in the next message. Use /setup cancel to stop.",
+  setup_ask_default_client_id: "Send your default X Client ID in the next message. Use /setup cancel to stop.",
+  setup_client_id_saved: "Client ID saved. Now send the X Client Secret, then delete that chat message afterwards.",
+  setup_state_expired: "Setup state expired. Please run /setup again.",
+  setup_save_failed: "Unable to save account credentials.",
+  setup_target_account_not_found: "Target account was not found.",
+  login_missing_default_credentials: "You have not saved default X client credentials yet. Run /setup first.",
+  login_connect_link: "Open this link to connect your X account:\n{url}",
+  login_reauthorize_link: "Open this link to re-authorize X account {accountId}:\n{url}",
+  remove_usage: "Usage: /remove <account_id>",
+  remove_done: "Removed account {accountId} if it existed in your account list.",
+  convert_usage: "Usage: /convert <tweet_id|all>",
+  convert_tweet_not_found: "Tweet not found.",
+  convert_tweet_not_owned: "Tweet does not belong to one of your accounts.",
+  convert_no_items: "No x_only media items matched your request.",
+  convert_finished: "Convert finished.\ntelegram: {telegram}\nr2: {r2}\nx_only: {xOnly}\nfailed: {failed}",
+  language_title: "Language settings",
+  language_current: "Current language: {language}",
+  language_default: "Default language is English.",
+  language_prompt: "Choose the language for bot messages and buttons.",
+  language_updated: "Language updated to {language}.",
+  language_usage: "Usage: /language [en|zh]",
+  language_invalid: "Unsupported language. Use /language en or /language zh.",
+  manual_save_account_toast: "Saving likes for @{username}...",
+  manual_save_account_started: "Manual save started for @{username}. New liked tweets will appear here.",
+  manual_save_account_finished: "Manual save attempt finished for @{username}.",
+  manual_save_all_toast: "Saving {count} active account(s)...",
+  manual_save_all_started: "Manual save started for {count} active account(s).",
+  manual_save_all_finished: "Manual save attempt finished for {count} active account(s).",
+  no_active_accounts: "No active accounts available.",
+  error_unknown_command: "Unknown command. Run /start to see the supported commands.",
+  error_account_not_found: "Account not found.",
+  error_chat_not_found: "Chat not found.",
+  error_missing_account_id: "Missing account id.",
+  error_invalid_interval: "Invalid interval.",
+  error_invalid_hour_range: "Invalid hour range.",
+  error_unsupported_action: "Unsupported action.",
+  auth_missing_chat_id: "Missing chat_id query parameter.",
+  auth_invalid_chat_id: "Invalid chat_id.",
+  auth_login_unavailable_title: "Login unavailable",
+  auth_authorization_failed_title: "Authorization failed",
+  auth_invalid_callback_title: "Invalid callback",
+  auth_state_expired_title: "State expired",
+  auth_state_expired_message: "Please run /login again.",
+  auth_login_completed_title: "Login completed",
+  auth_login_failed_title: "Login failed",
+  auth_missing_state_or_code: "Missing state or code.",
+  auth_unable_create_link: "Unable to create auth link.",
+  auth_unexpected_callback_failure: "Unexpected callback failure.",
+  auth_target_account_not_found: "Target X account was not found.",
+  auth_account_missing_credentials: "X account @{username} has no saved API credentials. Run /setup {accountId}.",
+  auth_user_not_setup: "User has not completed /setup yet.",
+  auth_account_mismatch: "Authenticated X account @{username} does not match the requested account.",
+  auth_connected_notification: "X account @{username} connected successfully. Polling is enabled by default.",
+  auth_connected_page: "Your X account @{username} has been connected. You can return to Telegram now.",
+  auth_failed_notification: "X login failed: {message}",
+  poller_relogin_required: "X account @{username} requires re-login. Please run /login again.",
+  tweet_no_text: "No text",
+  tweet_unknown_time: "Unknown time",
+  tweet_view_original: "View original post",
+  tweet_media_photo: "Photo",
+  tweet_media_video: "Video",
+  tweet_media_gif: "GIF",
+  tweet_media_r2_file: "{label} R2 file",
+  account_summary_line_1: "- @{username} ({accountId})",
+  account_summary_line_2: "  polling: {status}, every {minutes} min, {start}-{end} UTC",
+  account_summary_line_3: "  api credentials: {credentials}",
+  account_summary_line_4: "  last poll: {lastPollAt}",
+  account_credentials_account_specific: "account-specific",
+  account_credentials_default_fallback: "default/fallback",
+};
+
+type MessageMap = Record<keyof typeof en, string>;
+
+const zh: MessageMap = {
+  menu_start: "开始",
+  menu_accounts: "账号",
+  menu_polling: "轮询",
+  menu_status: "状态",
+  menu_login: "登录授权",
+  menu_setup: "配置凭据",
+  menu_convert_all: "转换全部",
+  menu_language: "语言",
+  quick_actions: "快捷操作：",
+  common_yes: "是",
+  common_no: "否",
+  common_on: "开启",
+  common_off: "关闭",
+  common_on_upper: "开",
+  common_off_upper: "关",
+  common_never: "从未",
+  common_english: "英文",
+  common_chinese: "中文",
+  start_title: "X Like Auto Save Bot",
+  start_intro: "输入 / 可以使用 Telegram 命令补全，或者直接点击下方按钮执行常用操作。",
+  start_usage: "用法：",
+  start_usage_setup_default: "/setup - 为新账号保存默认 X Client 凭据",
+  start_usage_setup_account: "/setup <account_id> - 更新某个已连接账号的凭据",
+  start_usage_login_default: "/login - 连接一个新的 X 账号",
+  start_usage_login_account: "/login <account_id> - 重新授权某个已连接账号",
+  start_usage_accounts: "/accounts - 查看已连接账号",
+  start_usage_polling: "/polling - 打开可视化轮询设置",
+  start_usage_convert: "/convert all - 重试 x_only 媒体转换",
+  start_usage_status: "/status - 查看当前机器人状态",
+  start_usage_language: "/language - 切换机器人语言",
+  accounts_empty: "还没有连接任何 X 账号。请先运行 /login。",
+  accounts_title: "已连接账号：",
+  accounts_hint: "可使用下方按钮打开轮询设置，或手动立即保存。",
+  accounts_manage_button: "管理 @{username}",
+  accounts_save_button: "保存 @{username}",
+  accounts_polling_settings_button: "轮询设置",
+  accounts_save_all_active_button: "保存全部启用账号",
+  polling_title: "轮询设置：",
+  polling_hint: "选择下方账号即可切换轮询、设置预设间隔或 UTC 时段，或手动立即保存。",
+  polling_custom_hint: "如果需要自定义值，仍然可以使用 /polling interval <account_id> <minutes> 和 /polling hours <account_id> <start-end>。",
+  polling_account_title: "@{username} 的轮询设置：",
+  polling_account_hint: "可使用下方按钮切换轮询、选择预设间隔或 UTC 时段，或手动立即保存。",
+  polling_toggle_on_button: "开启轮询",
+  polling_toggle_off_button: "关闭轮询",
+  polling_save_now_button: "立即保存",
+  polling_set_interval_button: "设置间隔",
+  polling_set_hours_button: "设置时段",
+  polling_back_to_list_button: "返回列表",
+  polling_back_button: "返回",
+  polling_interval_menu_title: "为 @{username} 选择轮询间隔：",
+  polling_current_interval: "当前间隔：{minutes} 分钟",
+  polling_interval_custom_hint: "如果需要自定义值，可使用 /polling interval {accountId} <minutes>（最小 {minimum}）。",
+  polling_hours_menu_title: "为 @{username} 选择轮询时段：",
+  polling_current_hours: "当前时段：{start}-{end} UTC",
+  polling_hours_custom_hint: "如果需要自定义时段，可使用 /polling hours {accountId} <start-end>。",
+  polling_enabled: "已开启轮询。",
+  polling_disabled: "已关闭轮询。",
+  polling_interval_set: "轮询间隔已设置为 {minutes} 分钟。",
+  polling_hours_set: "轮询时段已设置为 {start}-{end} UTC。",
+  polling_usage: "用法：/polling <list|on|off|interval|hours> ...\n运行 /polling 可打开可视化设置菜单。",
+  polling_interval_usage: "用法：/polling interval <account_id> <minutes>，最小值为 {minimum}。",
+  polling_hours_usage: "用法：/polling hours <account_id> <start-end>",
+  polling_invalid_hours_example: "时段格式无效。示例：/polling hours 12345 8-22",
+  polling_unknown_action: "未知的轮询操作。可用 list、on、off、interval 或 hours。",
+  status_default_credentials_saved: "默认凭据已保存：{value}",
+  status_connected_accounts: "已连接账号：{count}",
+  status_active_accounts: "启用中的账号：{count}",
+  status_account_api_credentials: "账号级 API 凭据：{count}",
+  status_x_only_media: "x_only 媒体：{count}",
+  status_workers_paid_enabled: "Workers 付费方案：{value}",
+  setup_cancelled: "已取消配置流程。",
+  setup_account_saved: "已为 @{username} 保存 API 凭据。该账号下次需要重新授权时，请运行 /login {accountId}。",
+  setup_default_saved: "默认 X Client 凭据已保存。运行 /login 即可连接新的 X 账号。",
+  setup_usage: "用法：/setup [account_id] [client_id client_secret]",
+  setup_ask_account_client_id: "请在下一条消息发送 @{username} 的 X Client ID。使用 /setup cancel 可停止。",
+  setup_ask_default_client_id: "请在下一条消息发送默认 X Client ID。使用 /setup cancel 可停止。",
+  setup_client_id_saved: "Client ID 已保存。现在请发送 X Client Secret，发送后建议删除那条聊天记录。",
+  setup_state_expired: "配置状态已过期，请重新运行 /setup。",
+  setup_save_failed: "无法保存账号凭据。",
+  setup_target_account_not_found: "未找到目标账号。",
+  login_missing_default_credentials: "你还没有保存默认 X Client 凭据，请先运行 /setup。",
+  login_connect_link: "打开此链接以连接你的 X 账号：\n{url}",
+  login_reauthorize_link: "打开此链接以重新授权 X 账号 {accountId}：\n{url}",
+  remove_usage: "用法：/remove <account_id>",
+  remove_done: "如果账号 {accountId} 存在于你的列表中，已将其移除。",
+  convert_usage: "用法：/convert <tweet_id|all>",
+  convert_tweet_not_found: "未找到对应推文。",
+  convert_tweet_not_owned: "这条推文不属于你的任何账号。",
+  convert_no_items: "没有匹配到任何 x_only 媒体。",
+  convert_finished: "转换完成。\ntelegram: {telegram}\nr2: {r2}\nx_only: {xOnly}\nfailed: {failed}",
+  language_title: "语言设置",
+  language_current: "当前语言：{language}",
+  language_default: "默认语言为英文。",
+  language_prompt: "请选择机器人消息与按钮使用的语言。",
+  language_updated: "语言已切换为 {language}。",
+  language_usage: "用法：/language [en|zh]",
+  language_invalid: "不支持该语言。请使用 /language en 或 /language zh。",
+  manual_save_account_toast: "正在保存 @{username} 的点赞…",
+  manual_save_account_started: "已开始为 @{username} 手动保存，新点赞推文会发到这里。",
+  manual_save_account_finished: "@{username} 的手动保存已执行完成。",
+  manual_save_all_toast: "正在保存 {count} 个已启用账号的点赞…",
+  manual_save_all_started: "已开始为 {count} 个已启用账号执行手动保存。",
+  manual_save_all_finished: "{count} 个已启用账号的手动保存已执行完成。",
+  no_active_accounts: "没有可用的启用中账号。",
+  error_unknown_command: "未知命令。运行 /start 查看支持的命令。",
+  error_account_not_found: "未找到账号。",
+  error_chat_not_found: "未找到当前聊天。",
+  error_missing_account_id: "缺少账号 ID。",
+  error_invalid_interval: "无效的轮询间隔。",
+  error_invalid_hour_range: "无效的时段范围。",
+  error_unsupported_action: "不支持该操作。",
+  auth_missing_chat_id: "缺少 chat_id 查询参数。",
+  auth_invalid_chat_id: "无效的 chat_id。",
+  auth_login_unavailable_title: "暂时无法登录",
+  auth_authorization_failed_title: "授权失败",
+  auth_invalid_callback_title: "无效回调",
+  auth_state_expired_title: "状态已过期",
+  auth_state_expired_message: "请重新运行 /login。",
+  auth_login_completed_title: "登录完成",
+  auth_login_failed_title: "登录失败",
+  auth_missing_state_or_code: "缺少 state 或 code。",
+  auth_unable_create_link: "无法创建授权链接。",
+  auth_unexpected_callback_failure: "回调处理发生了意外错误。",
+  auth_target_account_not_found: "未找到目标 X 账号。",
+  auth_account_missing_credentials: "X 账号 @{username} 尚未保存 API 凭据。请运行 /setup {accountId}。",
+  auth_user_not_setup: "用户还没有完成 /setup。",
+  auth_account_mismatch: "当前授权的 X 账号 @{username} 与请求的账号不一致。",
+  auth_connected_notification: "X 账号 @{username} 已连接成功，默认已开启轮询。",
+  auth_connected_page: "你的 X 账号 @{username} 已连接成功，现在可以返回 Telegram。",
+  auth_failed_notification: "X 登录失败：{message}",
+  poller_relogin_required: "X 账号 @{username} 需要重新登录，请再次运行 /login。",
+  tweet_no_text: "无正文",
+  tweet_unknown_time: "未知时间",
+  tweet_view_original: "查看原推",
+  tweet_media_photo: "图片",
+  tweet_media_video: "视频",
+  tweet_media_gif: "动图",
+  tweet_media_r2_file: "{label} R2 文件",
+  account_summary_line_1: "- @{username} ({accountId})",
+  account_summary_line_2: "  轮询：{status}，每 {minutes} 分钟，{start}-{end} UTC",
+  account_summary_line_3: "  API 凭据：{credentials}",
+  account_summary_line_4: "  上次轮询：{lastPollAt}",
+  account_credentials_account_specific: "账号专用",
+  account_credentials_default_fallback: "默认/回退",
+};
+
+const messages: Record<Language, MessageMap> = {
+  en,
+  zh,
+};
+
+const MENU_ACTION_KEYS: Record<MenuAction, keyof typeof en> = {
+  start: "menu_start",
+  accounts: "menu_accounts",
+  polling: "menu_polling",
+  status: "menu_status",
+  login: "menu_login",
+  setup: "menu_setup",
+  convert_all: "menu_convert_all",
+  language: "menu_language",
+};
+
+export type TranslationKey = keyof typeof en;
+
+export function normalizeLanguage(value?: string | null): Language | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "en" || normalized === "english" || normalized === "英文") {
+    return "en";
+  }
+  if (
+    normalized === "zh" ||
+    normalized === "zh-cn" ||
+    normalized === "zh_hans" ||
+    normalized === "chinese" ||
+    normalized === "中文"
+  ) {
+    return "zh";
+  }
+
+  return null;
+}
+
+export function t(
+  language: Language,
+  key: TranslationKey,
+  params: Record<string, string | number> = {},
+): string {
+  const template = messages[language][key] ?? messages[DEFAULT_LANGUAGE][key];
+  return template.replace(/\{(\w+)\}/g, (_match, name: string) => {
+    const value = params[name];
+    return value === undefined ? `{${name}}` : String(value);
+  });
+}
+
+export function getLanguageLabel(targetLanguage: Language, displayLanguage: Language = targetLanguage): string {
+  return targetLanguage === "en"
+    ? t(displayLanguage, "common_english")
+    : t(displayLanguage, "common_chinese");
+}
+
+export function getMenuActionLabel(action: MenuAction, language: Language): string {
+  return t(language, MENU_ACTION_KEYS[action]);
+}
+
+export function resolveMenuAction(text: string): MenuAction | null {
+  const normalized = text.trim();
+  const actions = Object.keys(MENU_ACTION_KEYS) as MenuAction[];
+  for (const action of actions) {
+    if (normalized === getMenuActionLabel(action, "en") || normalized === getMenuActionLabel(action, "zh")) {
+      return action;
+    }
+  }
+
+  return null;
+}

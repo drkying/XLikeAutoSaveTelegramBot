@@ -1,7 +1,9 @@
+import { normalizeLanguage, type Language } from "./i18n";
 import type { AuthState, Env } from "./types";
 
 const AUTH_PREFIX = "auth_state:";
 const POLLING_PREFIX = "polling_lock:";
+const LANGUAGE_PREFIX = "user_language:";
 
 export class KVStore {
   constructor(private readonly env: Env) {}
@@ -42,5 +44,13 @@ export class KVStore {
     }
     await this.setPollingLock(accountId, ttlSeconds);
     return true;
+  }
+
+  async setLanguage(chatId: number, language: Language): Promise<void> {
+    await this.env.KV.put(`${LANGUAGE_PREFIX}${chatId}`, language);
+  }
+
+  async getLanguage(chatId: number): Promise<Language | null> {
+    return normalizeLanguage(await this.env.KV.get(`${LANGUAGE_PREFIX}${chatId}`));
   }
 }

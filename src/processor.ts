@@ -8,6 +8,7 @@ import type {
   XUrlEntity,
   XUser,
 } from "./types";
+import { DEFAULT_LANGUAGE, t, type Language } from "./i18n";
 
 const MARKDOWN_V2_SPECIALS = /([_*\[\]()~`>#+\-=|{}.!\\])/g;
 
@@ -44,12 +45,16 @@ export function expandTcoUrls(text: string, entities?: XTweet["entities"]): stri
   return output.join("");
 }
 
-export function tweetToMarkdown(tweet: XTweet, includes?: XIncludes): string {
+export function tweetToMarkdown(
+  tweet: XTweet,
+  includes?: XIncludes,
+  language: Language = DEFAULT_LANGUAGE,
+): string {
   const author = findTweetAuthor(tweet, includes);
   const displayName = author?.name ?? author?.username ?? tweet.author_id;
   const username = author?.username ?? tweet.author_id;
-  const createdAt = formatTweetTimestamp(tweet.created_at);
-  const expandedText = expandTcoUrls(tweet.text, tweet.entities).trim() || "无正文";
+  const createdAt = formatTweetTimestamp(tweet.created_at, language);
+  const expandedText = expandTcoUrls(tweet.text, tweet.entities).trim() || t(language, "tweet_no_text");
   const tweetUrl = buildTweetUrl(tweet, author);
 
   return [
@@ -58,13 +63,17 @@ export function tweetToMarkdown(tweet: XTweet, includes?: XIncludes): string {
     "",
     escapeMarkdownV2(expandedText),
     "",
-    `🔗 [查看原推](${escapeMarkdownLinkUrl(tweetUrl)})`,
+    `🔗 [${escapeMarkdownV2(t(language, "tweet_view_original"))}](${escapeMarkdownLinkUrl(tweetUrl)})`,
   ].join("\n");
 }
 
-export function buildTweetFallbackMarkdown(markdown: string, mediaItems: MediaRecord[]): string {
+export function buildTweetFallbackMarkdown(
+  markdown: string,
+  mediaItems: MediaRecord[],
+  language: Language = DEFAULT_LANGUAGE,
+): string {
   const mediaLinks = mediaItems
-    .map((media, index) => buildR2FallbackLink(media, index))
+    .map((media, index) => buildR2FallbackLink(media, index, language))
     .filter((value): value is string => Boolean(value));
 
   if (mediaLinks.length === 0) {
@@ -75,7 +84,7 @@ export function buildTweetFallbackMarkdown(markdown: string, mediaItems: MediaRe
   const replacement = replaceTrailingBodyUrls(body, mediaLinks);
   const finalBody = replacement.remainingLinks.length === 0
     ? replacement.body
-    : appendFallbackLinksToBody(replacement.body, replacement.remainingLinks);
+    : appendFallbackLinksToBody(replacement.body, replacement.remainingLinks, language);
 
   return [head, finalBody, tail].filter((part) => part.length > 0).join("\n\n");
 }
@@ -174,9 +183,9 @@ function buildTweetUrl(tweet: XTweet, author?: XUser): string {
   return `https://x.com/i/web/status/${tweet.id}`;
 }
 
-function formatTweetTimestamp(value?: string): string {
+function formatTweetTimestamp(value: string | undefined, language: Language): string {
   if (!value) {
-    return "未知时间";
+    return t(language, "tweet_unknown_time");
   }
 
   const date = new Date(value);
@@ -197,11 +206,11 @@ function escapeMarkdownLinkUrl(url: string): string {
   return url.replace(/\\/g, "\\\\").replace(/\)/g, "\\)");
 }
 
-function getMediaLinkLabel(media: MediaRecord, index: number): string {
+function getMediaLinkLabel(media: MediaRecord, index: number, language: Language): string {
   const labelByType: Record<MediaRecord["media_type"], string> = {
-    photo: "图片",
-    video: "视频",
-    animated_gif: "动图",
+    photo: t(language, "tweet_media_photo"),
+    video: t(language, "tweet_media_video"),
+    animated_gif: t(language, "tweet_media_gif"),
   };
 
   return `${labelByType[media.media_type]} ${index + 1}`;
@@ -219,12 +228,15 @@ function getMediaLinkPrefix(mediaType: MediaRecord["media_type"]): string {
   }
 }
 
-function buildR2FallbackLink(media: MediaRecord, index: number): string | null {
+function buildR2FallbackLink(media: MediaRecord, index: number, language: Language): string | null {
   if (!media.r2_public_url) {
     return null;
   }
 
-  return `${getMediaLinkPrefix(media.media_type)} [${escapeMarkdownV2(`${getMediaLinkLabel(media, index)} R2 文件`)}](${escapeMarkdownLinkUrl(media.r2_public_url)})`;
+  const label = t(language, "tweet_media_r2_file", {
+    label: getMediaLinkLabel(media, index, language),
+  });
+  return `${getMediaLinkPrefix(media.media_type)} [${escapeMarkdownV2(label)}](${escapeMarkdownLinkUrl(media.r2_public_url)})`;
 }
 
 function splitTweetMarkdown(markdown: string): { head: string; body: string; tail: string } {
@@ -237,7 +249,8 @@ function splitTweetMarkdown(markdown: string): { head: string; body: string; tai
     };
   }
 
-  const tail = sections[sections.length - 1]?.startsWith("🔗 [查看原推]") ? sections.pop() ?? "" : "";
+  const lastSection = sections[sections.length - 1] ?? "";
+  const tail = /^🔗 \[(?:查看原推|View original post)\]/u.test(lastSection) ? sections.pop() ?? "" : "";
   const head = sections.shift() ?? "";
   const body = sections.join("\n\n");
 
@@ -293,9 +306,14 @@ function replaceTrailingBodyUrls(
   };
 }
 
-function appendFallbackLinksToBody(body: string, mediaLinks: string[]): string {
+function appendFallbackLinksToBody(body: string, mediaLinks: string[], language: Language): string {
   const trimmedBody = body.trim();
-  if (!trimmedBody || trimmedBody === "无正文") {
+  if (
+    !trimmedBody ||
+    trimmedBody === t(language, "tweet_no_text") ||
+    trimmedBody === t("en", "tweet_no_text") ||
+    trimmedBody === t("zh", "tweet_no_text")
+  ) {
     return mediaLinks.join("\n");
   }
 

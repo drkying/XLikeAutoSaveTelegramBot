@@ -1,5 +1,6 @@
 import type { Context } from "grammy";
 import { Database } from "../db";
+import { t, type Language } from "../i18n";
 import type { AccountData, Env } from "../types";
 
 export interface CommandDependencies {
@@ -48,14 +49,28 @@ export async function getOwnedAccount(
   return account;
 }
 
-export function formatAccountSummary(account: AccountData): string {
-  const status = account.is_active ? "on" : "off";
-  const lastPollAt = account.last_poll_at ?? "never";
-  const apiCredentials = account.x_client_id && account.x_client_secret ? "account-specific" : "default/fallback";
+export function formatAccountSummary(account: AccountData, language: Language): string {
+  const status = account.is_active ? t(language, "common_on") : t(language, "common_off");
+  const lastPollAt = account.last_poll_at ?? t(language, "common_never");
+  const apiCredentials = account.x_client_id && account.x_client_secret
+    ? t(language, "account_credentials_account_specific")
+    : t(language, "account_credentials_default_fallback");
   return [
-    `- @${account.username} (${account.account_id})`,
-    `  polling: ${status}, every ${account.poll_interval_min} min, ${account.poll_start_hour}-${account.poll_end_hour} UTC`,
-    `  api credentials: ${apiCredentials}`,
-    `  last poll: ${lastPollAt}`,
+    t(language, "account_summary_line_1", {
+      username: account.username,
+      accountId: account.account_id,
+    }),
+    t(language, "account_summary_line_2", {
+      status,
+      minutes: account.poll_interval_min,
+      start: account.poll_start_hour,
+      end: account.poll_end_hour,
+    }),
+    t(language, "account_summary_line_3", {
+      credentials: apiCredentials,
+    }),
+    t(language, "account_summary_line_4", {
+      lastPollAt,
+    }),
   ].join("\n");
 }
