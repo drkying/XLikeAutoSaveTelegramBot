@@ -32,25 +32,27 @@ export class Database {
 
   async createUser(user: UserData): Promise<UserData> {
     await this.prepare(
-      `INSERT INTO users (telegram_chat_id, x_client_id, x_client_secret)
-       VALUES (?, ?, ?)`,
+      `INSERT INTO users (telegram_chat_id, x_client_id, x_client_secret, credential_owner_account_id)
+       VALUES (?, ?, ?, ?)`,
       user.telegram_chat_id,
       user.x_client_id,
       user.x_client_secret,
+      user.credential_owner_account_id ?? null,
     ).run();
     return (await this.getUser(user.telegram_chat_id)) as UserData;
   }
 
   async updateUser(
     telegramChatId: number,
-    patch: Pick<UserData, "x_client_id" | "x_client_secret">,
+    patch: Pick<UserData, "x_client_id" | "x_client_secret" | "credential_owner_account_id">,
   ): Promise<UserData | null> {
     await this.prepare(
       `UPDATE users
-       SET x_client_id = ?, x_client_secret = ?, updated_at = datetime('now')
+       SET x_client_id = ?, x_client_secret = ?, credential_owner_account_id = ?, updated_at = datetime('now')
        WHERE telegram_chat_id = ?`,
       patch.x_client_id,
       patch.x_client_secret,
+      patch.credential_owner_account_id ?? null,
       telegramChatId,
     ).run();
     return this.getUser(telegramChatId);
@@ -75,17 +77,18 @@ export class Database {
     await this.prepare(
       `INSERT INTO accounts (
          account_id, telegram_chat_id, username, display_name,
-         x_client_id, x_client_secret,
+         x_client_id, x_client_secret, credential_owner_account_id,
          access_token, refresh_token, token_expires_at,
          is_active, poll_interval_min, poll_start_hour, poll_end_hour,
          last_poll_at, last_tweet_id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       account.account_id,
       account.telegram_chat_id,
       account.username,
       account.display_name ?? null,
       account.x_client_id ?? null,
       account.x_client_secret ?? null,
+      account.credential_owner_account_id ?? null,
       account.access_token,
       account.refresh_token,
       account.token_expires_at,
@@ -111,6 +114,7 @@ export class Database {
       "display_name",
       "x_client_id",
       "x_client_secret",
+      "credential_owner_account_id",
       "access_token",
       "refresh_token",
       "token_expires_at",

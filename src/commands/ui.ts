@@ -1,8 +1,9 @@
 import { Bot, InlineKeyboard, Keyboard, type Context } from "grammy";
+import { resolveCredentialUsage } from "../credential-ownership";
 import { DEFAULT_LANGUAGE, getLanguageLabel, getMenuActionLabel, normalizeLanguage, t, type Language } from "../i18n";
 import { getUserLanguage, setUserLanguage } from "../language-store";
 import { pollAccount } from "../poller";
-import type { AccountData } from "../types";
+import type { AccountData, UserData } from "../types";
 import type { CommandDependencies } from "./helpers";
 import {
   MIN_POLL_INTERVAL_MINUTES,
@@ -21,24 +22,56 @@ const HOUR_PRESETS = [
   { label: "9-18 UTC", value: "9-18" },
 ] as const;
 
-export const BOT_COMMANDS = [
-  { command: "start", description: "Show the main menu" },
-  { command: "setup", description: "Save your X client credentials" },
-  { command: "login", description: "Connect an X account" },
-  { command: "accounts", description: "List connected X accounts" },
-  { command: "remove", description: "Disconnect an X account" },
-  { command: "polling", description: "View or change polling settings" },
-  { command: "convert", description: "Retry media conversion" },
-  { command: "status", description: "Show current bot status" },
-  { command: "language", description: "Change bot language" },
+const BOT_COMMAND_NAMES = [
+  "start",
+  "setup",
+  "login",
+  "accounts",
+  "remove",
+  "polling",
+  "convert",
+  "status",
+  "language",
+  "credentials",
 ] as const;
 
+function getBotCommands(language: Language) {
+  return [
+    { command: "start", description: t(language, "command_desc_start") },
+    { command: "setup", description: t(language, "command_desc_setup") },
+    { command: "login", description: t(language, "command_desc_login") },
+    { command: "accounts", description: t(language, "command_desc_accounts") },
+    { command: "remove", description: t(language, "command_desc_remove") },
+    { command: "polling", description: t(language, "command_desc_polling") },
+    { command: "convert", description: t(language, "command_desc_convert") },
+    { command: "status", description: t(language, "command_desc_status") },
+    { command: "language", description: t(language, "command_desc_language") },
+    { command: "credentials", description: t(language, "command_desc_credentials") },
+  ];
+}
+
 export async function syncBotCommands(bot: Bot): Promise<void> {
-  await bot.api.setMyCommands(BOT_COMMANDS);
+  await bot.api.setMyCommands(getBotCommands("en"));
+  await bot.api.setMyCommands(getBotCommands("zh"), {
+    language_code: "zh",
+  });
+}
+
+export async function syncChatCommands(
+  bot: Bot | Context,
+  chatId: number,
+  language: Language,
+): Promise<void> {
+  await bot.api.setMyCommands(getBotCommands(language), {
+    scope: {
+      type: "chat",
+      chat_id: chatId,
+    },
+  });
 }
 
 export function getKnownCommands(): Set<string> {
-  return new Set(BOT_COMMANDS.map(({ command }) => `/${command}`));
+  return new Set(BOT_COMMAND_NAMES.map((command) => `/${command}`));
 }
 
 function formatIntervalPresetLabel(minutes: number, language: Language): string {
@@ -71,10 +104,14 @@ export function buildStartInlineKeyboard(language: Language): InlineKeyboard {
     .text(getMenuActionLabel("language", language), `${CALLBACK_PREFIX}:nav:language`);
 }
 
-export function buildAccountsMessage(accounts: AccountData[], language: Language): string {
+export function buildAccountsMessage(
+  accounts: AccountData[],
+  language: Language,
+  user?: UserData | null,
+): string {
   return [
     t(language, "accounts_title"),
-    ...accounts.map((account) => formatAccountSummary(account, language)),
+    ...accounts.map((account) => formatAccountSummary(account, language, user)),
     "",
     t(language, "accounts_hint"),
   ].join("\n");
@@ -106,10 +143,14 @@ export function buildAccountsKeyboard(accounts: AccountData[], language: Languag
     .text(t(language, "accounts_save_all_active_button"), `${CALLBACK_PREFIX}:save:all`);
 }
 
-export function buildPollingDashboardMessage(accounts: AccountData[], language: Language): string {
+export function buildPollingDashboardMessage(
+  accounts: AccountData[],
+  language: Language,
+  user?: UserData | null,
+): string {
   return [
     t(language, "polling_title"),
-    ...accounts.map((account) => formatAccountSummary(account, language)),
+    ...accounts.map((account) => formatAccountSummary(account, language, user)),
     "",
     t(language, "polling_hint"),
     t(language, "polling_custom_hint"),
@@ -130,13 +171,17 @@ export function buildPollingListKeyboard(accounts: AccountData[], language: Lang
     .text(getMenuActionLabel("language", language), `${CALLBACK_PREFIX}:nav:language`);
 }
 
-export function buildPollingAccountMessage(account: AccountData, language: Language): string {
+export function buildPollingAccountMessage(
+  account: AccountData,
+  language: Language,
+  user?: UserData | null,
+): string {
   return [
     t(language, "polling_account_title", {
       username: account.username,
     }),
     "",
-    formatAccountSummary(account, language),
+    formatAccountSummary(account, language, user),
     "",
     t(language, "polling_account_hint"),
   ].join("\n");
@@ -247,6 +292,9 @@ export function formatStatusMessage(
     connectedAccounts: number;
     activeAccounts: number;
     accountCredentialOverrides: number;
+    lowCostAccounts: number;
+    highCostAccounts: number;
+    unknownCostAccounts: number;
     xOnlyMedia: number;
     workersPaidEnabled: string;
   },
@@ -264,6 +312,15 @@ export function formatStatusMessage(
     }),
     t(language, "status_account_api_credentials", {
       count: input.accountCredentialOverrides,
+    }),
+    t(language, "status_low_cost_accounts", {
+      count: input.lowCostAccounts,
+    }),
+    t(language, "status_high_cost_accounts", {
+      count: input.highCostAccounts,
+    }),
+    t(language, "status_unknown_cost_accounts", {
+      count: input.unknownCostAccounts,
     }),
     t(language, "status_x_only_media", {
       count: input.xOnlyMedia,
@@ -312,19 +369,11 @@ async function updateInlineMessage(
 }
 
 async function showAccountsView(ctx: Context, deps: CommandDependencies, chatId: number): Promise<void> {
-  const language = await getUserLanguage(deps.env, chatId);
-  const accounts = await deps.db.listAccountsByUser(chatId);
-  if (accounts.length === 0) {
-    await updateInlineMessage(ctx, t(language, "accounts_empty"));
-    return;
-  }
-
-  await updateInlineMessage(ctx, buildAccountsMessage(accounts, language), buildAccountsKeyboard(accounts, language));
-}
-
-async function showPollingDashboard(ctx: Context, deps: CommandDependencies, chatId: number): Promise<void> {
-  const language = await getUserLanguage(deps.env, chatId);
-  const accounts = await deps.db.listAccountsByUser(chatId);
+  const [language, user, accounts] = await Promise.all([
+    getUserLanguage(deps.env, chatId),
+    deps.db.getUser(chatId),
+    deps.db.listAccountsByUser(chatId),
+  ]);
   if (accounts.length === 0) {
     await updateInlineMessage(ctx, t(language, "accounts_empty"));
     return;
@@ -332,7 +381,25 @@ async function showPollingDashboard(ctx: Context, deps: CommandDependencies, cha
 
   await updateInlineMessage(
     ctx,
-    buildPollingDashboardMessage(accounts, language),
+    buildAccountsMessage(accounts, language, user),
+    buildAccountsKeyboard(accounts, language),
+  );
+}
+
+async function showPollingDashboard(ctx: Context, deps: CommandDependencies, chatId: number): Promise<void> {
+  const [language, user, accounts] = await Promise.all([
+    getUserLanguage(deps.env, chatId),
+    deps.db.getUser(chatId),
+    deps.db.listAccountsByUser(chatId),
+  ]);
+  if (accounts.length === 0) {
+    await updateInlineMessage(ctx, t(language, "accounts_empty"));
+    return;
+  }
+
+  await updateInlineMessage(
+    ctx,
+    buildPollingDashboardMessage(accounts, language, user),
     buildPollingListKeyboard(accounts, language),
   );
 }
@@ -343,8 +410,11 @@ async function showPollingAccountView(
   chatId: number,
   accountId: string,
 ): Promise<void> {
-  const language = await getUserLanguage(deps.env, chatId);
-  const account = await getOwnedAccount(deps, chatId, accountId);
+  const [language, user, account] = await Promise.all([
+    getUserLanguage(deps.env, chatId),
+    deps.db.getUser(chatId),
+    getOwnedAccount(deps, chatId, accountId),
+  ]);
   if (!account) {
     await updateInlineMessage(ctx, t(language, "error_account_not_found"));
     return;
@@ -352,7 +422,7 @@ async function showPollingAccountView(
 
   await updateInlineMessage(
     ctx,
-    buildPollingAccountMessage(account, language),
+    buildPollingAccountMessage(account, language, user),
     buildPollingAccountKeyboard(account, language),
   );
 }
@@ -364,6 +434,7 @@ async function showStatusView(ctx: Context, deps: CommandDependencies, chatId: n
     deps.db.listAccountsByUser(chatId),
     deps.db.listMediaByStatus("x_only", chatId, 100),
   ]);
+  const usage = accounts.map((account) => resolveCredentialUsage(account, user));
 
   await updateInlineMessage(
     ctx,
@@ -372,7 +443,10 @@ async function showStatusView(ctx: Context, deps: CommandDependencies, chatId: n
         defaultCredentialsSaved: Boolean(user),
         connectedAccounts: accounts.length,
         activeAccounts: accounts.filter((account) => account.is_active === 1).length,
-        accountCredentialOverrides: accounts.filter((account) => account.x_client_id && account.x_client_secret).length,
+        accountCredentialOverrides: usage.filter((item) => item.source === "account-specific").length,
+        lowCostAccounts: usage.filter((item) => item.costLevel === "low").length,
+        highCostAccounts: usage.filter((item) => item.costLevel === "high").length,
+        unknownCostAccounts: usage.filter((item) => item.costLevel === "unknown").length,
         xOnlyMedia: xOnlyMedia.length,
         workersPaidEnabled: deps.env.WORKERS_PAID_ENABLED ?? "false",
       },
@@ -416,9 +490,10 @@ async function runManualSaveForAccount(
 
   const updated = await deps.db.getAccount(accountId);
   if (updated) {
+    const user = await deps.db.getUser(chatId);
     await updateInlineMessage(
       ctx,
-      buildPollingAccountMessage(updated, language),
+      buildPollingAccountMessage(updated, language, user),
       buildPollingAccountKeyboard(updated, language),
     );
   }
@@ -533,6 +608,7 @@ export function registerUiCallbacks(bot: Bot, deps: CommandDependencies): void {
             reply_markup: buildMainMenuKeyboard(selectedLanguage),
           },
         );
+        await syncChatCommands(ctx, chatId, selectedLanguage);
         return;
       }
     }
@@ -572,12 +648,13 @@ export function registerUiCallbacks(bot: Bot, deps: CommandDependencies): void {
         });
         return;
       }
+      const user = await deps.db.getUser(chatId);
 
       if (parts[2] === "view") {
         await ctx.answerCallbackQuery();
         await updateInlineMessage(
           ctx,
-          buildPollingAccountMessage(account, currentLanguage),
+          buildPollingAccountMessage(account, currentLanguage, user),
           buildPollingAccountKeyboard(account, currentLanguage),
         );
         return;
@@ -592,7 +669,7 @@ export function registerUiCallbacks(bot: Bot, deps: CommandDependencies): void {
         if (updated) {
           await updateInlineMessage(
             ctx,
-            buildPollingAccountMessage(updated, currentLanguage),
+            buildPollingAccountMessage(updated, currentLanguage, user),
             buildPollingAccountKeyboard(updated, currentLanguage),
           );
         }
@@ -631,7 +708,7 @@ export function registerUiCallbacks(bot: Bot, deps: CommandDependencies): void {
         if (updated) {
           await updateInlineMessage(
             ctx,
-            buildPollingAccountMessage(updated, currentLanguage),
+            buildPollingAccountMessage(updated, currentLanguage, user),
             buildPollingAccountKeyboard(updated, currentLanguage),
           );
         }
@@ -674,7 +751,7 @@ export function registerUiCallbacks(bot: Bot, deps: CommandDependencies): void {
         if (updated) {
           await updateInlineMessage(
             ctx,
-            buildPollingAccountMessage(updated, currentLanguage),
+            buildPollingAccountMessage(updated, currentLanguage, user),
             buildPollingAccountKeyboard(updated, currentLanguage),
           );
         }

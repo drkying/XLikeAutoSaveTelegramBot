@@ -1,7 +1,8 @@
 import type { Context } from "grammy";
+import { resolveCredentialUsage, type CredentialCostLevel } from "../credential-ownership";
 import { Database } from "../db";
 import { t, type Language } from "../i18n";
-import type { AccountData, Env } from "../types";
+import type { AccountData, Env, UserData } from "../types";
 
 export interface CommandDependencies {
   env: Env;
@@ -49,12 +50,37 @@ export async function getOwnedAccount(
   return account;
 }
 
-export function formatAccountSummary(account: AccountData, language: Language): string {
+export function formatCredentialCostLabel(level: CredentialCostLevel, language: Language): string {
+  if (level === "low") {
+    return t(language, "account_cost_low");
+  }
+  if (level === "high") {
+    return t(language, "account_cost_high");
+  }
+
+  return t(language, "account_cost_unknown");
+}
+
+export function formatCredentialOwnerLabel(
+  ownerAccountId: string | null,
+  language: Language,
+): string {
+  return ownerAccountId ?? t(language, "account_owner_unknown");
+}
+
+export function formatAccountSummary(
+  account: AccountData,
+  language: Language,
+  user?: UserData | null,
+): string {
   const status = account.is_active ? t(language, "common_on") : t(language, "common_off");
   const lastPollAt = account.last_poll_at ?? t(language, "common_never");
-  const apiCredentials = account.x_client_id && account.x_client_secret
+  const usage = resolveCredentialUsage(account, user);
+  const apiCredentials = usage.source === "account-specific"
     ? t(language, "account_credentials_account_specific")
-    : t(language, "account_credentials_default_fallback");
+    : usage.source === "default/fallback"
+      ? t(language, "account_credentials_default_fallback")
+      : t(language, "account_credentials_missing");
   return [
     t(language, "account_summary_line_1", {
       username: account.username,
@@ -71,6 +97,10 @@ export function formatAccountSummary(account: AccountData, language: Language): 
     }),
     t(language, "account_summary_line_4", {
       lastPollAt,
+    }),
+    t(language, "account_summary_line_5", {
+      cost: formatCredentialCostLabel(usage.costLevel, language),
+      ownerAccountId: formatCredentialOwnerLabel(usage.ownerAccountId, language),
     }),
   ].join("\n");
 }

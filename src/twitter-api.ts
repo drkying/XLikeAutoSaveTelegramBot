@@ -168,6 +168,43 @@ export async function refreshAccessToken(
   return requestToken(form, options, 2);
 }
 
+export async function validateClientCredentials(
+  options: TokenRequestOptions,
+): Promise<void> {
+  const form = new URLSearchParams({
+    refresh_token: "credential_validation_probe",
+    grant_type: "refresh_token",
+    client_id: options.clientId,
+  });
+  const headers = new Headers({
+    "content-type": "application/x-www-form-urlencoded",
+  });
+
+  if (options.clientSecret) {
+    headers.set("authorization", `Basic ${base64EncodeUtf8(`${options.clientId}:${options.clientSecret}`)}`);
+  }
+
+  const response = await fetch(X_TOKEN_ENDPOINT, {
+    method: "POST",
+    headers,
+    body: form.toString(),
+  });
+
+  const payload = response.ok
+    ? await readJsonResponse<unknown>(response)
+    : await readErrorPayload(response);
+
+  if (response.ok || isAcceptedCredentialValidationFailure(response.status, payload)) {
+    return;
+  }
+
+  throw new XApiError(
+    buildErrorMessage(response.status, payload),
+    response.status,
+    payload,
+  );
+}
+
 export async function ensureValidToken(
   account: AccountData,
   db: Database,
@@ -554,6 +591,21 @@ function buildErrorMessage(status: number, payload: unknown): string {
   }
 
   return `X API request failed with ${status}.`;
+}
+
+function isAcceptedCredentialValidationFailure(status: number, payload: unknown): boolean {
+  if (status !== 400) {
+    return false;
+  }
+
+  const detail = extractErrorDetail(payload)?.toLowerCase() ?? "";
+  return (
+    detail.includes("invalid_grant") ||
+    detail.includes("invalid refresh token") ||
+    detail.includes("value passed for the token was invalid") ||
+    detail.includes("refresh token") ||
+    detail.includes("code_verifier")
+  );
 }
 
 function extractErrorDetail(payload: unknown): string | null {

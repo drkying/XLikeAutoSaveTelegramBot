@@ -17,6 +17,7 @@ export interface UserData {
   telegram_chat_id: number;
   x_client_id: string;
   x_client_secret: string;
+  credential_owner_account_id?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -28,6 +29,7 @@ export interface AccountData {
   display_name?: string | null;
   x_client_id?: string | null;
   x_client_secret?: string | null;
+  credential_owner_account_id?: string | null;
   access_token: string;
   refresh_token: string;
   token_expires_at: number;
@@ -98,6 +100,7 @@ export interface AuthState {
   telegram_chat_id: number;
   x_client_id: string;
   x_client_secret: string;
+  credential_owner_account_id?: string | null;
   expected_account_id?: string | null;
   created_at: string;
 }

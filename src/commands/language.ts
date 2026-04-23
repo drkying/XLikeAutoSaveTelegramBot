@@ -3,7 +3,7 @@ import { getLanguageLabel, normalizeLanguage, t } from "../i18n";
 import { getUserLanguage, setUserLanguage } from "../language-store";
 import type { CommandDependencies } from "./helpers";
 import { getChatId, getCommandArgs } from "./helpers";
-import { buildLanguageMenuKeyboard, buildLanguageMenuMessage, buildMainMenuKeyboard } from "./ui";
+import { buildLanguageMenuKeyboard, buildLanguageMenuMessage, buildMainMenuKeyboard, syncChatCommands } from "./ui";
 
 export async function handleLanguageCommand(
   ctx: Context,
@@ -33,6 +33,7 @@ export async function handleLanguageCommand(
   }
 
   await setUserLanguage(deps.env, chatId, selectedLanguage);
+  await syncChatCommands(ctx, chatId, selectedLanguage);
   await ctx.reply(
     t(selectedLanguage, "language_updated", {
       language: getLanguageLabel(selectedLanguage, selectedLanguage),

@@ -12,7 +12,10 @@ export async function handleAccountsCommand(ctx: Context, deps: CommandDependenc
   }
 
   const language = await getUserLanguage(deps.env, chatId);
-  const accounts = await deps.db.listAccountsByUser(chatId);
+  const [user, accounts] = await Promise.all([
+    deps.db.getUser(chatId),
+    deps.db.listAccountsByUser(chatId),
+  ]);
   if (accounts.length === 0) {
     await ctx.reply(t(language, "accounts_empty"), {
       reply_markup: buildMainMenuKeyboard(language),
@@ -20,7 +23,7 @@ export async function handleAccountsCommand(ctx: Context, deps: CommandDependenc
     return;
   }
 
-  await ctx.reply(buildAccountsMessage(accounts, language), {
+  await ctx.reply(buildAccountsMessage(accounts, language, user), {
     reply_markup: buildAccountsKeyboard(accounts, language),
   });
 }

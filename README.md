@@ -78,6 +78,7 @@ npm run dev:scheduled
 - `npm run dev:scheduled` 用于手动触发 Cron 路径。
 - 所有 npm 脚本都会先生成 `.wrangler/generated/wrangler.jsonc`，所以切换 `CF_*` 或运行时变量后，重新执行脚本即可。
 - Bot 支持 `/setup <account_id>` 为单个已连接账号更新 API 凭据，也支持 `/login <account_id>` 对单个账号重新授权。
+- `/setup` 在保存前会校验 X Client ID / Client Secret 是否有效；输入过程中如改用其他命令或菜单操作，会自动中断本次配置。可通过 `/credentials` 查看已保存凭据、它们与账号的对应关系，并用 `/credentials clear <account_id>` 让某个账号改回默认凭据。
 - Bot 默认英文，支持 `/language` 在英文与中文之间切换；主菜单按钮使用无斜杠文案，但底层命令仍保持 `/start`、`/login` 等形式可直接输入。
 - 如果 Bot 运行在启用了 Topics 的 Telegram 群组/超级群组中，新保存的点赞推文会按发推人自动建话题，并持续发到该作者对应的话题；如果群组不支持话题，则回退到主聊天发送。
 - 需要测试 OAuth 或 Telegram webhook 时，先把本地服务通过 ngrok / cloudflared 等工具暴露出去，再同步更新：

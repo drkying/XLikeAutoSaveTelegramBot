@@ -5,6 +5,7 @@ import { logError, logInfo, serializeError } from "./observability";
 import { notifyAdmin } from "./sender";
 import { registerAccountsCommand } from "./commands/accounts";
 import { handleAccountsCommand } from "./commands/accounts";
+import { registerCredentialsCommand } from "./commands/credentials";
 import { registerConvertCommand } from "./commands/convert";
 import { handleConvertCommand } from "./commands/convert";
 import { registerLanguageCommand } from "./commands/language";
@@ -14,7 +15,11 @@ import { handleLoginCommand } from "./commands/login";
 import { registerPollingCommand } from "./commands/polling";
 import { handlePollingCommand } from "./commands/polling";
 import { registerRemoveCommand } from "./commands/remove";
-import { registerSetupCommand, handleSetupConversation } from "./commands/setup";
+import {
+  registerSetupCommand,
+  handleSetupConversation,
+  interruptSetupConversationIfNeeded,
+} from "./commands/setup";
 import { handleSetupCommand } from "./commands/setup";
 import { registerStartCommand } from "./commands/start";
 import { handleStartCommand } from "./commands/start";
@@ -43,6 +48,7 @@ export function getBot(env: Env): Bot {
   registerSetupCommand(bot, deps);
   registerLoginCommand(bot, deps);
   registerAccountsCommand(bot, deps);
+  registerCredentialsCommand(bot, deps);
   registerRemoveCommand(bot, deps);
   registerPollingCommand(bot, deps);
   registerConvertCommand(bot, deps);
@@ -51,11 +57,24 @@ export function getBot(env: Env): Bot {
   registerUiCallbacks(bot, deps);
 
   bot.on("message:text", async (ctx) => {
+    const text = ctx.message.text.trim();
+    const chatId = ctx.chat?.id ?? null;
+    const menuAction = text.startsWith("/") ? null : resolveMenuAction(text);
+    const command = text.startsWith("/") ? text.split(/\s+/)[0].split("@")[0] : null;
+    if (
+      chatId &&
+      (
+        (command !== null && command !== "/setup")
+        || (menuAction !== null && menuAction !== "setup")
+      )
+    ) {
+      await interruptSetupConversationIfNeeded(deps.env, chatId);
+    }
+
     if (await handleSetupConversation(ctx, deps)) {
       return;
     }
 
-    const text = ctx.message.text.trim();
     if (!text.startsWith("/")) {
       const action = resolveMenuAction(text);
       if (action === "start") {
@@ -78,8 +97,7 @@ export function getBot(env: Env): Bot {
       return;
     }
 
-    const command = text.split(/\s+/)[0].split("@")[0];
-    if (!knownCommands.has(command)) {
+    if (command && !knownCommands.has(command)) {
       const language = await getUserLanguage(env, ctx.chat?.id);
       await ctx.reply(t(language, "error_unknown_command"));
     }

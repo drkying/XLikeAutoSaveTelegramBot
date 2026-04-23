@@ -1,6 +1,11 @@
 import type { Bot, Context } from "grammy";
+import {
+  findKnownCredentialOwnerAccountIdInChat,
+  syncCredentialOwnerAcrossChatBindings,
+} from "../credential-ownership";
 import { t, type Language } from "../i18n";
 import { getUserLanguage } from "../language-store";
+import { XApiError, validateClientCredentials } from "../twitter-api";
 import type { CommandDependencies } from "./helpers";
 import { getChatId, getCommandArgs } from "./helpers";
 import type { SetupState, UserData } from "../types";
@@ -26,18 +31,79 @@ async function clearSetupState(env: CommandDependencies["env"], chatId: number):
   await env.KV.delete(`${SETUP_STATE_PREFIX}${chatId}`);
 }
 
+export async function interruptSetupConversationIfNeeded(
+  env: CommandDependencies["env"],
+  chatId: number,
+): Promise<boolean> {
+  const state = await getSetupState(env, chatId);
+  if (!state) {
+    return false;
+  }
+
+  await clearSetupState(env, chatId);
+  return true;
+}
+
+function formatCredentialValidationError(error: unknown, language: Language): string {
+  if (error instanceof XApiError) {
+    if (error.status === 401 || error.status === 403) {
+      return t(language, "setup_credentials_invalid");
+    }
+    if (error.status === 429) {
+      return t(language, "setup_credentials_validation_rate_limited");
+    }
+  }
+
+  const message = error instanceof Error ? error.message : t(language, "setup_save_failed");
+  return t(language, "setup_credentials_validation_failed", {
+    message,
+  });
+}
+
+async function validateCredentials(
+  clientId: string,
+  clientSecret: string,
+  language: Language,
+): Promise<void> {
+  try {
+    await validateClientCredentials({
+      clientId,
+      clientSecret,
+    });
+  } catch (error) {
+    throw new Error(formatCredentialValidationError(error, language));
+  }
+}
+
+async function resolveCredentialOwnerAccountId(
+  deps: CommandDependencies,
+  chatId: number,
+  clientId: string,
+  clientSecret: string,
+  fallbackOwnerAccountId: string | null = null,
+): Promise<string | null> {
+  return (
+    await findKnownCredentialOwnerAccountIdInChat(deps.db, chatId, clientId, clientSecret)
+  ) ?? fallbackOwnerAccountId;
+}
+
 async function saveCredentials(
   deps: CommandDependencies,
   chatId: number,
   clientId: string,
   clientSecret: string,
+  language: Language,
 ): Promise<void> {
+  await validateCredentials(clientId, clientSecret, language);
+  const ownerAccountId = await resolveCredentialOwnerAccountId(deps, chatId, clientId, clientSecret);
   const user: UserData = {
     telegram_chat_id: chatId,
     x_client_id: clientId,
     x_client_secret: clientSecret,
+    credential_owner_account_id: ownerAccountId,
   };
   await deps.db.upsertUser(user);
+  await syncCredentialOwnerAcrossChatBindings(deps.db, chatId, clientId, clientSecret, ownerAccountId);
   await clearSetupState(deps.env, chatId);
 }
 
@@ -54,10 +120,14 @@ async function saveAccountCredentials(
     throw new Error(t(language, "setup_target_account_not_found"));
   }
 
+  await validateCredentials(clientId, clientSecret, language);
+  const ownerAccountId = await resolveCredentialOwnerAccountId(deps, chatId, clientId, clientSecret, accountId);
   await deps.db.updateAccount(accountId, {
     x_client_id: clientId,
     x_client_secret: clientSecret,
+    credential_owner_account_id: ownerAccountId,
   });
+  await syncCredentialOwnerAcrossChatBindings(deps.db, chatId, clientId, clientSecret, ownerAccountId);
   await clearSetupState(deps.env, chatId);
   return account.username;
 }
@@ -94,8 +164,12 @@ export async function handleSetupCommand(
   }
 
   if (args.length >= 2) {
-    await saveCredentials(deps, chatId, args[0], args[1]);
-    await ctx.reply(t(language, "setup_default_saved"));
+    try {
+      await saveCredentials(deps, chatId, args[0], args[1], language);
+      await ctx.reply(t(language, "setup_default_saved"));
+    } catch (error) {
+      await ctx.reply(error instanceof Error ? error.message : t(language, "setup_save_failed"));
+    }
     return;
   }
 
@@ -180,7 +254,12 @@ export async function handleSetupConversation(
     return true;
   }
 
-  await saveCredentials(deps, chatId, state.client_id, text);
-  await ctx.reply(t(language, "setup_default_saved"));
+  try {
+    await saveCredentials(deps, chatId, state.client_id, text, language);
+    await ctx.reply(t(language, "setup_default_saved"));
+  } catch (error) {
+    await clearSetupState(deps.env, chatId);
+    await ctx.reply(error instanceof Error ? error.message : t(language, "setup_save_failed"));
+  }
   return true;
 }

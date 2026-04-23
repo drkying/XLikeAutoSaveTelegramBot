@@ -30,14 +30,17 @@ export async function handlePollingCommand(
   const language = await getUserLanguage(deps.env, chatId);
   const [action = "list", accountId, value] = getCommandArgs(inputText);
   if (action === "list") {
-    const accounts = await deps.db.listAccountsByUser(chatId);
+    const [user, accounts] = await Promise.all([
+      deps.db.getUser(chatId),
+      deps.db.listAccountsByUser(chatId),
+    ]);
     if (accounts.length === 0) {
       await ctx.reply(t(language, "accounts_empty"), {
         reply_markup: buildMainMenuKeyboard(language),
       });
       return;
     }
-    await ctx.reply(buildPollingDashboardMessage(accounts, language), {
+    await ctx.reply(buildPollingDashboardMessage(accounts, language, user), {
       reply_markup: buildPollingListKeyboard(accounts, language),
     });
     return;
@@ -53,6 +56,7 @@ export async function handlePollingCommand(
     await ctx.reply(t(language, "error_account_not_found"));
     return;
   }
+  const user = await deps.db.getUser(chatId);
 
   if (action === "on" || action === "off") {
     await deps.db.setAccountActive(accountId, action === "on");
@@ -61,7 +65,7 @@ export async function handlePollingCommand(
       await ctx.reply(t(language, "error_account_not_found"));
       return;
     }
-    await ctx.reply(buildPollingAccountMessage(updated, language), {
+    await ctx.reply(buildPollingAccountMessage(updated, language, user), {
       reply_markup: buildPollingAccountKeyboard(updated, language),
     });
     return;
@@ -83,7 +87,7 @@ export async function handlePollingCommand(
       await ctx.reply(t(language, "error_account_not_found"));
       return;
     }
-    await ctx.reply(buildPollingAccountMessage(updated, language), {
+    await ctx.reply(buildPollingAccountMessage(updated, language, user), {
       reply_markup: buildPollingAccountKeyboard(updated, language),
     });
     return;
@@ -109,7 +113,7 @@ export async function handlePollingCommand(
       await ctx.reply(t(language, "error_account_not_found"));
       return;
     }
-    await ctx.reply(buildPollingAccountMessage(updated, language), {
+    await ctx.reply(buildPollingAccountMessage(updated, language, user), {
       reply_markup: buildPollingAccountKeyboard(updated, language),
     });
     return;

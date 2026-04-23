@@ -1,4 +1,9 @@
 import type { Context } from "hono";
+import {
+  findKnownCredentialOwnerAccountIdInChat,
+  resolveCredentialUsage,
+  syncCredentialOwnerAcrossChatBindings,
+} from "./credential-ownership";
 import { Database, createDatabase } from "./db";
 import { DEFAULT_LANGUAGE, t, type Language } from "./i18n";
 import { KVStore } from "./kv-store";
@@ -51,6 +56,7 @@ function htmlPage(language: Language, title: string, message: string): string {
 interface AuthCredentialContext {
   clientId: string;
   clientSecret: string;
+  credentialOwnerAccountId?: string | null;
   expectedAccountId?: string | null;
 }
 
@@ -61,17 +67,16 @@ async function resolveAuthCredentialContext(
   targetAccountId?: string,
 ): Promise<AuthCredentialContext> {
   if (targetAccountId) {
-    const account = await db.getAccount(targetAccountId);
+    const [account, user] = await Promise.all([
+      db.getAccount(targetAccountId),
+      db.getUser(telegramChatId),
+    ]);
     if (!account || account.telegram_chat_id !== telegramChatId) {
       throw new Error(t(language, "auth_target_account_not_found"));
     }
 
-    const fallbackUser = (!account.x_client_id || !account.x_client_secret)
-      ? await db.getUser(telegramChatId)
-      : null;
-    const clientId = account.x_client_id ?? fallbackUser?.x_client_id;
-    const clientSecret = account.x_client_secret ?? fallbackUser?.x_client_secret;
-    if (!clientId || !clientSecret) {
+    const usage = resolveCredentialUsage(account, user);
+    if (!usage.clientId || !usage.clientSecret) {
       throw new Error(t(language, "auth_account_missing_credentials", {
         username: account.username,
         accountId: account.account_id,
@@ -79,8 +84,9 @@ async function resolveAuthCredentialContext(
     }
 
     return {
-      clientId,
-      clientSecret,
+      clientId: usage.clientId,
+      clientSecret: usage.clientSecret,
+      credentialOwnerAccountId: usage.ownerAccountId,
       expectedAccountId: account.account_id,
     };
   }
@@ -93,6 +99,7 @@ async function resolveAuthCredentialContext(
   return {
     clientId: user.x_client_id,
     clientSecret: user.x_client_secret,
+    credentialOwnerAccountId: user.credential_owner_account_id ?? null,
     expectedAccountId: null,
   };
 }
@@ -114,6 +121,7 @@ export async function createAuthLink(
     telegram_chat_id: telegramChatId,
     x_client_id: authContext.clientId,
     x_client_secret: authContext.clientSecret,
+    credential_owner_account_id: authContext.credentialOwnerAccountId ?? null,
     expected_account_id: authContext.expectedAccountId ?? null,
     created_at: new Date().toISOString(),
   };
@@ -150,6 +158,16 @@ async function completeAuthCallback(
     }));
   }
   const expiresAt = Math.floor(Date.now() / 1000) + token.expires_in;
+  const credentialOwnerAccountId = authState.credential_owner_account_id
+    ?? (
+      await findKnownCredentialOwnerAccountIdInChat(
+        db,
+        authState.telegram_chat_id,
+        authState.x_client_id,
+        authState.x_client_secret,
+      )
+    )
+    ?? me.id;
 
   await db.upsertAccount({
     account_id: me.id,
@@ -158,6 +176,7 @@ async function completeAuthCallback(
     display_name: me.name,
     x_client_id: authState.x_client_id,
     x_client_secret: authState.x_client_secret,
+    credential_owner_account_id: credentialOwnerAccountId,
     access_token: token.access_token,
     refresh_token: token.refresh_token ?? "",
     token_expires_at: expiresAt,
@@ -168,6 +187,13 @@ async function completeAuthCallback(
     last_poll_at: null,
     last_tweet_id: null,
   });
+  await syncCredentialOwnerAcrossChatBindings(
+    db,
+    authState.telegram_chat_id,
+    authState.x_client_id,
+    authState.x_client_secret,
+    credentialOwnerAccountId,
+  );
 
   return {
     username: me.username,
