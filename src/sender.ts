@@ -32,6 +32,11 @@ interface TelegramMessage {
   animation?: TelegramAnimation;
 }
 
+interface TelegramForumTopic {
+  message_thread_id: number;
+  name: string;
+}
+
 export interface SentMediaResult {
   mediaId?: number;
   fileId?: string | null;
@@ -42,6 +47,10 @@ export interface SentMediaResult {
 export interface SendTweetMessageResult {
   sentResults: SentMediaResult[];
   fallbackMedia: MediaRecord[];
+}
+
+export interface TelegramSendOptions {
+  messageThreadId?: number | null;
 }
 
 export class TelegramMediaSendError extends Error {
@@ -72,6 +81,26 @@ function getPreferredMediaSource(media: MediaRecord): string | null {
 
 function isHttpUrl(value: string): boolean {
   return value.startsWith("http://") || value.startsWith("https://");
+}
+
+function withThreadTarget(
+  payload: Record<string, unknown>,
+  options?: TelegramSendOptions,
+): Record<string, unknown> {
+  if (options?.messageThreadId !== undefined && options.messageThreadId !== null) {
+    return {
+      ...payload,
+      message_thread_id: options.messageThreadId,
+    };
+  }
+
+  return payload;
+}
+
+function normalizeForumTopicName(name: string): string {
+  const trimmed = name.replace(/\s+/g, " ").trim();
+  const normalized = Array.from(trimmed).slice(0, 128).join("");
+  return normalized || "Unknown author";
 }
 
 function extractFileId(message: TelegramMessage): string | null {
@@ -165,13 +194,14 @@ export async function sendMessage(
   env: Env,
   chatId: number,
   text: string,
+  options?: TelegramSendOptions,
 ): Promise<TelegramMessage> {
-  return callTelegramApi<TelegramMessage>(env, "sendMessage", {
+  return callTelegramApi<TelegramMessage>(env, "sendMessage", withThreadTarget({
     chat_id: chatId,
     text,
     parse_mode: "MarkdownV2",
     disable_web_page_preview: true,
-  });
+  }, options));
 }
 
 export async function notifyUser(env: Env, chatId: number, message: string): Promise<void> {
@@ -200,6 +230,7 @@ export async function sendMediaRecord(
   chatId: number,
   media: MediaRecord,
   caption?: string,
+  options?: TelegramSendOptions,
 ): Promise<SentMediaResult> {
   const source = getPreferredMediaSource(media);
   if (!source) {
@@ -221,26 +252,26 @@ export async function sendMediaRecord(
   let message: TelegramMessage;
   try {
     if (media.media_type === "photo") {
-      message = await callTelegramApi<TelegramMessage>(env, "sendPhoto", {
+      message = await callTelegramApi<TelegramMessage>(env, "sendPhoto", withThreadTarget({
         chat_id: chatId,
         photo: source,
         caption,
         parse_mode: caption ? "MarkdownV2" : undefined,
-      });
+      }, options));
     } else if (media.media_type === "animated_gif") {
-      message = await callTelegramApi<TelegramMessage>(env, "sendAnimation", {
+      message = await callTelegramApi<TelegramMessage>(env, "sendAnimation", withThreadTarget({
         chat_id: chatId,
         animation: source,
         caption,
         parse_mode: caption ? "MarkdownV2" : undefined,
-      });
+      }, options));
     } else {
-      message = await callTelegramApi<TelegramMessage>(env, "sendVideo", {
+      message = await callTelegramApi<TelegramMessage>(env, "sendVideo", withThreadTarget({
         chat_id: chatId,
         video: source,
         caption,
         parse_mode: caption ? "MarkdownV2" : undefined,
-      });
+      }, options));
     }
   } catch (error) {
     if (shouldFallbackToR2(media, source, error)) {
@@ -269,6 +300,7 @@ async function sendMediaGroup(
   chatId: number,
   caption: string | undefined,
   mediaItems: MediaRecord[],
+  options?: TelegramSendOptions,
 ): Promise<SentMediaResult[]> {
   logInfo("telegram.media_group.sending", {
     chat_id: chatId,
@@ -289,10 +321,10 @@ async function sendMediaGroup(
     };
   });
 
-  const messages = await callTelegramApi<TelegramMessage[]>(env, "sendMediaGroup", {
+  const messages = await callTelegramApi<TelegramMessage[]>(env, "sendMediaGroup", withThreadTarget({
     chat_id: chatId,
     media: payload,
-  });
+  }, options));
 
   return Promise.all(mediaItems.map(async (media, index) => {
     const fileId = messages[index] ? extractFileId(messages[index]) : null;
@@ -311,10 +343,11 @@ export async function sendTweetMessage(
   chatId: number,
   markdown: string | undefined,
   mediaItems: MediaRecord[],
+  options?: TelegramSendOptions,
 ): Promise<SendTweetMessageResult> {
   if (mediaItems.length === 0) {
     if (markdown) {
-      await sendMessage(env, chatId, markdown);
+      await sendMessage(env, chatId, markdown, options);
     }
     return {
       sentResults: [],
@@ -327,7 +360,7 @@ export async function sendTweetMessage(
   ) {
     try {
       return {
-        sentResults: await sendMediaGroup(env, chatId, markdown, mediaItems),
+        sentResults: await sendMediaGroup(env, chatId, markdown, mediaItems, options),
         fallbackMedia: [],
       };
     } catch (error) {
@@ -355,6 +388,7 @@ export async function sendTweetMessage(
         chatId,
         media,
         !captionSent ? markdown : undefined,
+        options,
       );
       results.push(result);
       captionSent ||= Boolean(markdown);
@@ -377,6 +411,19 @@ export async function sendTweetMessage(
     sentResults: results,
     fallbackMedia,
   };
+}
+
+export async function createForumTopic(
+  env: Env,
+  chatId: number,
+  name: string,
+): Promise<number> {
+  const topic = await callTelegramApi<TelegramForumTopic>(env, "createForumTopic", {
+    chat_id: chatId,
+    name: normalizeForumTopicName(name),
+  });
+
+  return topic.message_thread_id;
 }
 
 function shouldSendViaMediaGroup(mediaItems: MediaRecord[]): boolean {

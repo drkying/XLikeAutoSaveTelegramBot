@@ -49,6 +49,15 @@ export interface TweetAuthor {
   updated_at?: string;
 }
 
+export interface AuthorTopicRecord {
+  telegram_chat_id: number;
+  author_id: string;
+  topic_name: string;
+  message_thread_id: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface TweetRecord {
   tweet_id: string;
   account_id: string;

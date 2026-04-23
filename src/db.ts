@@ -1,5 +1,6 @@
 import type {
   AccountData,
+  AuthorTopicRecord,
   Env,
   MediaRecord,
   MediaStorageStatus,
@@ -237,6 +238,41 @@ export class Database {
       `SELECT * FROM tweet_authors WHERE author_id = ?`,
       authorId,
     ).first<TweetAuthor>()) ?? null;
+  }
+
+  async getAuthorTopic(
+    telegramChatId: number,
+    authorId: string,
+  ): Promise<AuthorTopicRecord | null> {
+    return (await this.prepare(
+      `SELECT * FROM author_topics WHERE telegram_chat_id = ? AND author_id = ?`,
+      telegramChatId,
+      authorId,
+    ).first<AuthorTopicRecord>()) ?? null;
+  }
+
+  async upsertAuthorTopic(topic: AuthorTopicRecord): Promise<AuthorTopicRecord> {
+    await this.prepare(
+      `INSERT INTO author_topics (telegram_chat_id, author_id, topic_name, message_thread_id)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(telegram_chat_id, author_id) DO UPDATE SET
+         topic_name = excluded.topic_name,
+         message_thread_id = excluded.message_thread_id,
+         updated_at = datetime('now')`,
+      topic.telegram_chat_id,
+      topic.author_id,
+      topic.topic_name,
+      topic.message_thread_id,
+    ).run();
+    return (await this.getAuthorTopic(topic.telegram_chat_id, topic.author_id)) as AuthorTopicRecord;
+  }
+
+  async deleteAuthorTopic(telegramChatId: number, authorId: string): Promise<void> {
+    await this.prepare(
+      `DELETE FROM author_topics WHERE telegram_chat_id = ? AND author_id = ?`,
+      telegramChatId,
+      authorId,
+    ).run();
   }
 
   async createTweet(tweet: TweetRecord): Promise<TweetRecord> {

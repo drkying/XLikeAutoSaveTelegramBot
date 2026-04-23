@@ -5,7 +5,7 @@ import { getUserLanguage } from "./language-store";
 import { ensureMediaStoredInR2, processMediaItem } from "./media-handler";
 import { createCorrelationId, logError, logInfo, logWarn, serializeError } from "./observability";
 import { buildTweetFallbackMarkdown, extractMedia, tweetToMarkdown } from "./processor";
-import { notifyAdmin, notifyUser, sendTweetMessage } from "./sender";
+import { createForumTopic, notifyAdmin, notifyUser, sendTweetMessage } from "./sender";
 import { ensureValidToken, getLikedTweets, XApiError } from "./twitter-api";
 import type {
   AccountData,
@@ -91,12 +91,112 @@ function resolvePersistedMediaStatus(
   return "failed";
 }
 
+function isGroupChat(chatId: number): boolean {
+  return chatId < 0;
+}
+
+function buildAuthorTopicName(author: TweetAuthor): string {
+  return `@${author.username}`;
+}
+
+function isMissingMessageThreadError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.toLowerCase().includes("message thread not found");
+}
+
+async function resolveAuthorMessageThreadId(
+  env: Env,
+  db: ReturnType<typeof createDatabase>,
+  account: AccountData,
+  author: TweetAuthor,
+): Promise<number | undefined> {
+  if (!isGroupChat(account.telegram_chat_id)) {
+    return undefined;
+  }
+
+  const existing = await db.getAuthorTopic(account.telegram_chat_id, author.author_id);
+  if (existing?.message_thread_id) {
+    return existing.message_thread_id;
+  }
+
+  const topicName = buildAuthorTopicName(author);
+  try {
+    const messageThreadId = await createForumTopic(env, account.telegram_chat_id, topicName);
+    await db.upsertAuthorTopic({
+      telegram_chat_id: account.telegram_chat_id,
+      author_id: author.author_id,
+      topic_name: topicName,
+      message_thread_id: messageThreadId,
+    });
+    logInfo("poller.telegram_topic.created", {
+      account_id: account.account_id,
+      chat_id: account.telegram_chat_id,
+      author_id: author.author_id,
+      username: author.username,
+      topic_name: topicName,
+      message_thread_id: messageThreadId,
+    });
+    return messageThreadId;
+  } catch (error) {
+    logWarn("poller.telegram_topic.create_failed", {
+      account_id: account.account_id,
+      chat_id: account.telegram_chat_id,
+      author_id: author.author_id,
+      username: author.username,
+      topic_name: topicName,
+      ...serializeError(error),
+    });
+    return undefined;
+  }
+}
+
+async function sendTweetMessageWithTopicFallback(
+  env: Env,
+  db: ReturnType<typeof createDatabase>,
+  account: AccountData,
+  tweet: TweetRecord,
+  markdown: string | undefined,
+  mediaItems: MediaRecord[],
+  messageThreadId?: number,
+) {
+  try {
+    return await sendTweetMessage(
+      env,
+      account.telegram_chat_id,
+      markdown,
+      mediaItems,
+      { messageThreadId },
+    );
+  } catch (error) {
+    if (!messageThreadId || !isMissingMessageThreadError(error)) {
+      throw error;
+    }
+
+    await db.deleteAuthorTopic(account.telegram_chat_id, tweet.author_id);
+    logWarn("poller.telegram_topic.thread_missing", {
+      account_id: account.account_id,
+      chat_id: account.telegram_chat_id,
+      author_id: tweet.author_id,
+      tweet_id: tweet.tweet_id,
+      message_thread_id: messageThreadId,
+      ...serializeError(error),
+    });
+    return sendTweetMessage(
+      env,
+      account.telegram_chat_id,
+      markdown,
+      mediaItems,
+    );
+  }
+}
+
 async function persistTweetMedia(
   env: Env,
   account: AccountData,
   tweet: TweetRecord,
   mediaItems: MediaRecord[],
   language: Awaited<ReturnType<typeof getUserLanguage>>,
+  messageThreadId?: number,
 ): Promise<void> {
   const db = createDatabase(env);
   const preparedMedia: MediaRecord[] = [];
@@ -128,11 +228,14 @@ async function persistTweetMedia(
   try {
     const allFallbackMedia = [...fallbackMedia];
     if (telegramMedia.length > 0) {
-      const sendResult = await sendTweetMessage(
+      const sendResult = await sendTweetMessageWithTopicFallback(
         env,
-        account.telegram_chat_id,
+        db,
+        account,
+        tweet,
         shouldDeferTweetText ? undefined : tweet.text_markdown ?? "",
         telegramMedia,
+        messageThreadId,
       );
       sentResults = sendResult.sentResults;
 
@@ -149,15 +252,26 @@ async function persistTweetMedia(
 
     const sendableFallbackMedia = allFallbackMedia.filter((media) => shouldSendViaR2Fallback(media));
     if (sendableFallbackMedia.length > 0) {
-      await sendTweetMessage(
+      await sendTweetMessageWithTopicFallback(
         env,
-        account.telegram_chat_id,
+        db,
+        account,
+        tweet,
         buildTweetFallbackMarkdown(tweet.text_markdown ?? "", sendableFallbackMedia, language),
         [],
+        messageThreadId,
       );
       sentFallbackMessage = true;
     } else if (shouldDeferTweetText || telegramMedia.length === 0) {
-      await sendTweetMessage(env, account.telegram_chat_id, tweet.text_markdown ?? "", []);
+      await sendTweetMessageWithTopicFallback(
+        env,
+        db,
+        account,
+        tweet,
+        tweet.text_markdown ?? "",
+        [],
+        messageThreadId,
+      );
       sentPlainMessage = true;
     }
 
@@ -169,6 +283,7 @@ async function persistTweetMedia(
       telegram_media_count: telegramMedia.length,
       fallback_media_count: sendableFallbackMedia.length,
       deferred_tweet_text: shouldDeferTweetText,
+      message_thread_id: messageThreadId ?? null,
       sent_result_count: sentResults.length,
       sent_fallback_message: sentFallbackMessage,
       sent_plain_message: sentPlainMessage,
@@ -253,6 +368,7 @@ async function handleTweet(
   const author = await db.upsertAuthor(getTweetAuthor(tweet, includes));
   const markdown = tweetToMarkdown(tweet, includes, language);
   const extractedMedia = extractMedia(tweet, includes);
+  const messageThreadId = await resolveAuthorMessageThreadId(env, db, account, author);
 
   const tweetRecord = await db.createTweet({
     tweet_id: tweet.id,
@@ -271,6 +387,7 @@ async function handleTweet(
     username: account.username,
     tweet_id: tweet.id,
     media_count: extractedMedia.length,
+    message_thread_id: messageThreadId ?? null,
   });
 
   const mediaRecords: MediaRecord[] = [];
@@ -290,7 +407,7 @@ async function handleTweet(
     mediaRecords.push(created);
   }
 
-  await persistTweetMedia(env, account, tweetRecord, mediaRecords, language);
+  await persistTweetMedia(env, account, tweetRecord, mediaRecords, language, messageThreadId);
 }
 
 async function getAuthorizedAccount(env: Env, account: AccountData): Promise<{
