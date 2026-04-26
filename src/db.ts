@@ -17,10 +17,42 @@ export interface SearchTweetOptions {
 }
 
 export class Database {
+  private credentialColumnsReady: Promise<void> | null = null;
+
   constructor(private readonly env: Env) {}
 
   private prepare(sql: string, ...params: SqlValue[]) {
     return this.env.DB.prepare(sql).bind(...params);
+  }
+
+  private async ensureCredentialColumns(): Promise<void> {
+    if (!this.credentialColumnsReady) {
+      this.credentialColumnsReady = (async () => {
+        await this.ensureColumnExists("users", "x_client_id", "TEXT");
+        await this.ensureColumnExists("users", "x_client_secret", "TEXT");
+        await this.ensureColumnExists("users", "credential_owner_account_id", "TEXT");
+        await this.ensureColumnExists("accounts", "x_client_id", "TEXT");
+        await this.ensureColumnExists("accounts", "x_client_secret", "TEXT");
+        await this.ensureColumnExists("accounts", "credential_owner_account_id", "TEXT");
+      })();
+    }
+
+    await this.credentialColumnsReady;
+  }
+
+  private async ensureColumnExists(
+    table: "users" | "accounts",
+    column: string,
+    sqlType: "TEXT",
+  ): Promise<void> {
+    const columnsResult = await this.prepare(`PRAGMA table_info(${table})`).all<{ name?: string }>();
+    const columns = columnsResult.results ?? [];
+    const hasColumn = columns.some((item) => item.name === column);
+    if (hasColumn) {
+      return;
+    }
+
+    await this.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${sqlType}`).run();
   }
 
   async getUser(telegramChatId: number): Promise<UserData | null> {
@@ -31,6 +63,7 @@ export class Database {
   }
 
   async createUser(user: UserData): Promise<UserData> {
+    await this.ensureCredentialColumns();
     await this.prepare(
       `INSERT INTO users (telegram_chat_id, x_client_id, x_client_secret, credential_owner_account_id)
        VALUES (?, ?, ?, ?)`,
@@ -46,6 +79,7 @@ export class Database {
     telegramChatId: number,
     patch: Pick<UserData, "x_client_id" | "x_client_secret" | "credential_owner_account_id">,
   ): Promise<UserData | null> {
+    await this.ensureCredentialColumns();
     await this.prepare(
       `UPDATE users
        SET x_client_id = ?, x_client_secret = ?, credential_owner_account_id = ?, updated_at = datetime('now')
@@ -74,6 +108,7 @@ export class Database {
   }
 
   async createAccount(account: AccountData): Promise<AccountData> {
+    await this.ensureCredentialColumns();
     await this.prepare(
       `INSERT INTO accounts (
          account_id, telegram_chat_id, username, display_name,
@@ -106,6 +141,14 @@ export class Database {
     accountId: string,
     patch: Partial<AccountData>,
   ): Promise<AccountData | null> {
+    if (
+      patch.x_client_id !== undefined ||
+      patch.x_client_secret !== undefined ||
+      patch.credential_owner_account_id !== undefined
+    ) {
+      await this.ensureCredentialColumns();
+    }
+
     const updates: string[] = [];
     const values: SqlValue[] = [];
     const allowed: Array<keyof AccountData> = [
