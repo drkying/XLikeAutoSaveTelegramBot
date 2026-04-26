@@ -19,7 +19,7 @@ export function getTelegramMediaSizeLimitBytes(env: Pick<Env, "TELEGRAM_API_BASE
     : SELF_HOSTED_TELEGRAM_MEDIA_SIZE_LIMIT_BYTES;
 }
 
-function isOfficialTelegramApiBase(apiBase: string): boolean {
+export function isOfficialTelegramApiBase(apiBase: string): boolean {
   try {
     return new URL(apiBase).hostname.toLowerCase() === OFFICIAL_TELEGRAM_API_HOST;
   } catch {

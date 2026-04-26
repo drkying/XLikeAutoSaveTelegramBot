@@ -95,6 +95,17 @@ npm run dev:scheduled
   - X App Redirect URI：`<APP_BASE_URL>/auth/callback`
   - Telegram webhook URL：`<APP_BASE_URL>/webhook`
 
+## 运行状态接口
+
+`GET /status` 会返回当前配置和运行状态，包括 Telegram 是否使用自定义 Bot API、媒体直发阈值、Cloudflare 绑定状态、D1 schema 状态和数据计数。该接口不会返回 token 或 secret。
+
+如果配置了 `WEBHOOK_SECRET`，请求需要带其中一种认证方式：
+
+```bash
+curl -H "Authorization: Bearer <WEBHOOK_SECRET>" "https://<worker-domain>/status"
+curl -H "X-Status-Secret: <WEBHOOK_SECRET>" "https://<worker-domain>/status"
+```
+
 ## 部署
 
 部署前确认生产环境 `APP_BASE_URL` 已通过环境变量或 Dashboard 运行时变量指向 Worker 域名 / 自定义域名，且 X App Redirect URI 已改成同一地址。

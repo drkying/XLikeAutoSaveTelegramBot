@@ -216,7 +216,7 @@ async function persistTweetMedia(
 
   const fallbackMedia = preparedMedia.filter((media) => shouldSendViaR2Fallback(media));
   const telegramMedia = preparedMedia.filter((media) => shouldSendViaTelegram(media));
-  const shouldDeferTweetText = fallbackMedia.length > 0 || telegramMedia.some((media) => !media.telegram_file_id);
+  const shouldDeferTweetText = fallbackMedia.length > 0;
   let sentResults: Array<{
     mediaId?: number;
     fileId?: string | null;
@@ -225,6 +225,7 @@ async function persistTweetMedia(
   }> = [];
   let sentFallbackMessage = false;
   let sentPlainMessage = false;
+  let sentCaptionWithTelegramMedia = false;
   try {
     const allFallbackMedia = [...fallbackMedia];
     if (telegramMedia.length > 0) {
@@ -238,6 +239,7 @@ async function persistTweetMedia(
         messageThreadId,
       );
       sentResults = sendResult.sentResults;
+      sentCaptionWithTelegramMedia = sendResult.captionSent;
 
       for (const media of sendResult.fallbackMedia) {
         const uploadedMedia = await ensureMediaStoredInR2(env, media, {
@@ -257,7 +259,11 @@ async function persistTweetMedia(
         db,
         account,
         tweet,
-        buildTweetFallbackMarkdown(tweet.text_markdown ?? "", sendableFallbackMedia, language),
+        buildTweetFallbackMarkdown(
+          sentCaptionWithTelegramMedia ? "" : tweet.text_markdown ?? "",
+          sendableFallbackMedia,
+          language,
+        ),
         [],
         messageThreadId,
       );
@@ -285,6 +291,7 @@ async function persistTweetMedia(
       deferred_tweet_text: shouldDeferTweetText,
       message_thread_id: messageThreadId ?? null,
       sent_result_count: sentResults.length,
+      sent_caption_with_telegram_media: sentCaptionWithTelegramMedia,
       sent_fallback_message: sentFallbackMessage,
       sent_plain_message: sentPlainMessage,
     });

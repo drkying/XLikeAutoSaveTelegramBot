@@ -246,6 +246,17 @@ curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo"
 https://media.example.com
 ```
 
+## 9.1 运行状态接口
+
+部署后可以访问 `GET /status` 查看完整运行状态，包括 Telegram Bot API 基地址、是否自定义 API、媒体直发阈值、Cloudflare 绑定状态、D1 schema 状态和数据计数。
+
+如果配置了 `WEBHOOK_SECRET`，需要携带认证头：
+
+```bash
+curl -H "Authorization: Bearer <WEBHOOK_SECRET>" "https://<APP_BASE_URL_HOST>/status"
+curl -H "X-Status-Secret: <WEBHOOK_SECRET>" "https://<APP_BASE_URL_HOST>/status"
+```
+
 ## 10. 数据库初始化步骤
 
 建表 SQL 和后续升级 SQL 都在 `migrations/` 目录中，目前至少包括：

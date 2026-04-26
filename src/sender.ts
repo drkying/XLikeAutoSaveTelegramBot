@@ -47,6 +47,7 @@ export interface SentMediaResult {
 export interface SendTweetMessageResult {
   sentResults: SentMediaResult[];
   fallbackMedia: MediaRecord[];
+  captionSent: boolean;
 }
 
 export interface TelegramSendOptions {
@@ -350,6 +351,7 @@ export async function sendTweetMessage(
     return {
       sentResults: [],
       fallbackMedia: [],
+      captionSent: false,
     };
   }
 
@@ -360,6 +362,7 @@ export async function sendTweetMessage(
       return {
         sentResults: await sendMediaGroup(env, chatId, markdown, mediaItems, options),
         fallbackMedia: [],
+        captionSent: Boolean(markdown),
       };
     } catch (error) {
       if (!isRecoverableMediaGroupError(error)) {
@@ -408,6 +411,7 @@ export async function sendTweetMessage(
   return {
     sentResults: results,
     fallbackMedia,
+    captionSent,
   };
 }
 
@@ -427,12 +431,7 @@ export async function createForumTopic(
 function shouldSendViaMediaGroup(mediaItems: MediaRecord[]): boolean {
   return (
     mediaItems.length > 1 &&
-    mediaItems.every((media) => media.media_type === "photo" || media.media_type === "video") &&
-    !mediaItems.some((media) =>
-      media.media_type === "video" &&
-      !media.telegram_file_id &&
-      isHttpUrl(media.x_original_url ?? ""),
-    )
+    mediaItems.every((media) => media.media_type === "photo" || media.media_type === "video")
   );
 }
 

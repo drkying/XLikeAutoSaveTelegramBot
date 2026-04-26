@@ -3,6 +3,7 @@ import { handleAuthCallback, handleAuthLogin } from "./auth";
 import { createWebhookHandler } from "./bot";
 import { createCorrelationId, logError, logInfo, logWarn, serializeError } from "./observability";
 import { pollAllAccounts } from "./poller";
+import { buildRuntimeStatus, isRuntimeStatusAuthorized } from "./runtime-status";
 import { ensureD1Schema } from "./schema";
 import { notifyAdmin } from "./sender";
 import type { Env } from "./types";
@@ -45,6 +46,14 @@ app.get("/", (c) =>
     workersPaidEnabled: c.env.WORKERS_PAID_ENABLED ?? "false",
   }),
 );
+
+app.get("/status", async (c) => {
+  if (!isRuntimeStatusAuthorized(c.req.raw, c.env)) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+
+  return c.json(await buildRuntimeStatus(c.env));
+});
 
 app.get("/auth/login", handleAuthLogin);
 app.get("/auth/callback", handleAuthCallback);
