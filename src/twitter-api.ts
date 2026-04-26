@@ -601,6 +601,7 @@ function isAcceptedCredentialValidationFailure(status: number, payload: unknown)
   const detail = extractErrorDetail(payload)?.toLowerCase() ?? "";
   return (
     detail.includes("invalid_grant") ||
+    detail.includes("invalid_request") ||
     detail.includes("invalid refresh token") ||
     detail.includes("value passed for the token was invalid") ||
     detail.includes("refresh token") ||
