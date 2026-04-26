@@ -15,10 +15,12 @@ const d1Config = generatedConfig.d1_databases?.find((binding) => binding.binding
 if (!d1Config?.database_id) {
   console.warn(
     [
-      "Generated Wrangler config has no DB.database_id; trying remote D1 migrations by binding name DB.",
-      "If this fails in Cloudflare Git builds, add CF_D1_DATABASE_NAME and CF_D1_DATABASE_ID to Build variables and secrets.",
+      "Generated Wrangler config has no DB.database_id; skipping build-time remote D1 migrations.",
+      "The deployed Worker will repair the D1 schema at runtime through the DB binding before handling requests or scheduled jobs.",
+      "If you want build-time migrations in Cloudflare Git builds, add CF_D1_DATABASE_NAME and CF_D1_DATABASE_ID to Build variables and secrets.",
     ].join("\n"),
   );
+  process.exit(0);
 }
 
 await runCommand(resolveExecutable("wrangler"), [

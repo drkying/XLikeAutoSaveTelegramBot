@@ -3,6 +3,7 @@ import { handleAuthCallback, handleAuthLogin } from "./auth";
 import { createWebhookHandler } from "./bot";
 import { createCorrelationId, logError, logInfo, logWarn, serializeError } from "./observability";
 import { pollAllAccounts } from "./poller";
+import { ensureD1Schema } from "./schema";
 import { notifyAdmin } from "./sender";
 import type { Env } from "./types";
 
@@ -30,6 +31,11 @@ app.use("*", async (c, next) => {
     status: c.res.status,
     duration_ms: Date.now() - requestStartedAt,
   });
+});
+
+app.use("*", async (c, next) => {
+  await ensureD1Schema(c.env);
+  await next();
 });
 
 app.get("/", (c) =>
@@ -91,6 +97,7 @@ export default {
             job_id: jobId,
             cron: "*/5 * * * *",
           });
+          await ensureD1Schema(env);
           await pollAllAccounts(env, { jobId });
           logInfo("cron.completed", {
             job_id: jobId,
