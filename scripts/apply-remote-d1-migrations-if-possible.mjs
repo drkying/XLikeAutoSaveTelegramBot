@@ -13,19 +13,15 @@ const d1Config = generatedConfig.d1_databases?.find((binding) => binding.binding
   ?? generatedConfig.d1_databases?.[0];
 
 if (!d1Config?.database_id) {
-  console.warn(
-    "Skipping remote D1 migrations: generated Wrangler config still has no database_id for binding DB."
+  console.error(
+    [
+      "Cannot apply remote D1 migrations: generated Wrangler config has no DB.database_id.",
+      "Remote deploy is blocked to avoid publishing code against an out-of-date D1 schema.",
+      "Set both CF_D1_DATABASE_NAME and CF_D1_DATABASE_ID in the environment that runs `npm run deploy`, then redeploy.",
+      "In Cloudflare Git builds, put these values in Settings > Build > Build variables and secrets.",
+    ].join("\n"),
   );
-  console.warn(
-    "Cloudflare Git builds only expose Settings > Build > Build variables and secrets at build time."
-  );
-  console.warn(
-    "If you need automated remote migrations against an existing database, add both CF_D1_DATABASE_NAME and CF_D1_DATABASE_ID there, then redeploy."
-  );
-  console.warn(
-    "If this was the first deploy using automatic provisioning, rerun `npm run db:init:remote` after Wrangler has linked a concrete D1 database."
-  );
-  process.exit(0);
+  process.exit(1);
 }
 
 await runCommand(resolveExecutable("wrangler"), [

@@ -107,7 +107,7 @@ wrangler secret put WEBHOOK_SECRET
 npm run deploy
 ```
 
-- `npm run deploy` 现在会先执行 `npm run build`，在生成配置里已经拿到 `database_id` 时先应用远程 D1 migration，再用 `wrangler deploy --keep-vars` 部署，部署后再兜底检查一次远程 migration。
+- `npm run deploy` 现在会先执行 `npm run build`，再应用远程 D1 migration 和 schema repair，然后用 `wrangler deploy --keep-vars` 部署，部署后再兜底检查一次远程 migration/repair。部署环境必须提供 `CF_D1_DATABASE_NAME` 和 `CF_D1_DATABASE_ID`，否则会直接失败，避免上线后出现 `no such column`。
 - 如果你使用 Cloudflare Git 自动构建，`Settings > Build > Build variables and secrets` 与 Worker 运行时变量是两套东西。`CF_D1_DATABASE_NAME`、`CF_D1_DATABASE_ID`、`CF_KV_ID`、`CF_R2_BUCKET_NAME` 这类会参与生成 Wrangler 绑定配置的值，必须放到 Build variables 里，不能只放在 Worker 运行时变量里。
 - `APP_BASE_URL`、`TELEGRAM_API_BASE`、`R2_PUBLIC_DOMAIN`、`WORKERS_PAID_ENABLED` 如果只想继续沿用 Dashboard 当前运行时值，可以不放到 Build variables；如果你希望每次构建时由代码侧覆盖它们，也需要同步放到 Build variables。
 

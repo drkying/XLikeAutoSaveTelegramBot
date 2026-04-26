@@ -334,12 +334,12 @@ npm run deploy
 会自动执行：
 
 1. `npm run build`
-2. 如果生成配置里已经有 `DB.database_id`，先执行远程 D1 初始化：
+2. 执行远程 D1 初始化和 schema repair；部署环境必须提供 `CF_D1_DATABASE_NAME` 和 `CF_D1_DATABASE_ID`，否则会直接失败：
    `wrangler d1 migrations apply DB --remote --config .wrangler/generated/wrangler.jsonc`
 3. `wrangler deploy --keep-vars --config .wrangler/generated/wrangler.jsonc`
 4. 部署后再兜底检查一次远程 D1 初始化：
    `wrangler d1 migrations apply DB --remote --config .wrangler/generated/wrangler.jsonc`
-5. 如果生成配置里仍然没有 `database_id`，脚本会打印告警并跳过远程 migration，而不是直接让整次部署失败
+5. 如果生成配置里没有 `DB.database_id`，脚本会阻止部署，避免代码和远端 D1 schema 不匹配
 
 ## 14. Cloudflare Git 自动构建注意事项
 
