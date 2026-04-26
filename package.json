@@ -9,6 +9,8 @@
     "dev:scheduled": "npm run cf:config && wrangler dev --test-scheduled --config .wrangler/generated/wrangler.jsonc",
     "db:init:local": "npm run cf:config && wrangler d1 migrations apply DB --local --config .wrangler/generated/wrangler.jsonc",
     "db:init:remote": "npm run cf:config && wrangler d1 migrations apply DB --remote --config .wrangler/generated/wrangler.jsonc",
+    "db:repair:local": "npm run cf:config && node ./scripts/repair-d1-schema.mjs --local",
+    "db:repair:remote": "npm run cf:config && node ./scripts/repair-d1-schema.mjs --remote",
     "build": "npm run cf-typegen && npm run check && npm run db:init:local",
     "deploy": "npm run build && node ./scripts/apply-remote-d1-migrations-if-possible.mjs && wrangler deploy --keep-vars --config .wrangler/generated/wrangler.jsonc && node ./scripts/apply-remote-d1-migrations-if-possible.mjs",
     "check": "tsc --noEmit",

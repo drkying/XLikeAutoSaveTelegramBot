@@ -38,6 +38,11 @@ await runCommand(resolveExecutable("wrangler"), [
   ".wrangler/generated/wrangler.jsonc"
 ]);
 
+await runCommand(process.execPath, [
+  "scripts/repair-d1-schema.mjs",
+  "--remote",
+]);
+
 function resolveExecutable(name) {
   if (process.platform === "win32") {
     return `${name}.cmd`;

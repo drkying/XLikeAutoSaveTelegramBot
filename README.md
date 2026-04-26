@@ -66,6 +66,15 @@ npm run db:init:local
 npm run db:init:remote
 ```
 
+如果线上登录或保存时报 `D1_ERROR: no such column: x_client_id`、`credential_owner_account_id` 或 `telegram_file_url`，说明远端 D1 schema 落后于当前代码。先运行：
+
+```bash
+npm run db:repair:remote
+```
+
+该脚本会先检查列是否存在，只补缺失列，并回填账号级 X 凭据。
+远端修复需要当前环境能访问 Cloudflare，并且生成配置里有 D1 `database_id`；如果 `npm run cf:config` 显示 `D1:auto`，请先设置 `CF_D1_DATABASE_NAME` 和 `CF_D1_DATABASE_ID`。
+
 ## 本地开发
 
 ```bash

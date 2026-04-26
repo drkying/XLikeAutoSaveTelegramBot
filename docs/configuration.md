@@ -262,6 +262,15 @@ npm run db:init:remote
 
 脚本内部会使用 D1 绑定名 `DB` 和 `.wrangler/generated/wrangler.jsonc`，因此不需要在仓库里硬编码数据库名称。
 
+如果线上 Worker 已经部署，但登录或保存时报 `D1_ERROR: no such column: x_client_id`，通常是远端 D1 漏了后续 migration。可以执行：
+
+```bash
+npm run db:repair:remote
+```
+
+修复脚本会通过 `PRAGMA table_info` 检查 `users`、`accounts`、`media` 的新增列，只对缺失列执行 `ALTER TABLE`，并重新创建缺失的 `author_topics` 表和索引。
+远端修复需要 Cloudflare API 权限，并且 `.wrangler/generated/wrangler.jsonc` 里已经有 `DB.database_id`；如果 `npm run cf:config` 输出 `D1:auto`，先在当前 shell / CI / Build variables 中设置 `CF_D1_DATABASE_NAME` 和 `CF_D1_DATABASE_ID`。
+
 ## 11. 推荐配置顺序
 
 建议完全按这个顺序做：
