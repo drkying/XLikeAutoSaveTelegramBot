@@ -268,8 +268,7 @@ npm run db:init:remote
 npm run db:repair:remote
 ```
 
-修复脚本会通过 `PRAGMA table_info` 检查 `users`、`accounts`、`media` 的新增列，只对缺失列执行 `ALTER TABLE`，并重新创建缺失的 `author_topics` 表和索引。
-远端修复需要 Cloudflare API 权限，并且 `.wrangler/generated/wrangler.jsonc` 里已经有 `DB.database_id`；如果 `npm run cf:config` 输出 `D1:auto`，先在当前 shell / CI / Build variables 中设置 `CF_D1_DATABASE_NAME` 和 `CF_D1_DATABASE_ID`。
+修复脚本会通过 `PRAGMA table_info` 检查 `users`、`accounts`、`media` 的新增列，只对缺失列执行 `ALTER TABLE`，并重新创建缺失的 `author_topics` 表和索引。远端修复需要 Cloudflare API 权限；脚本会优先通过绑定名 `DB` 访问远端 D1。如果 Wrangler 无法通过绑定名找到远端库，再在 Cloudflare Git 的 Build variables and secrets 中设置 `CF_D1_DATABASE_NAME` 和 `CF_D1_DATABASE_ID`。
 
 ## 11. 推荐配置顺序
 
@@ -334,12 +333,12 @@ npm run deploy
 会自动执行：
 
 1. `npm run build`
-2. 执行远程 D1 初始化和 schema repair；部署环境必须提供 `CF_D1_DATABASE_NAME` 和 `CF_D1_DATABASE_ID`，否则会直接失败：
+2. 通过绑定名 `DB` 执行远程 D1 初始化和 schema repair：
    `wrangler d1 migrations apply DB --remote --config .wrangler/generated/wrangler.jsonc`
 3. `wrangler deploy --keep-vars --config .wrangler/generated/wrangler.jsonc`
 4. 部署后再兜底检查一次远程 D1 初始化：
    `wrangler d1 migrations apply DB --remote --config .wrangler/generated/wrangler.jsonc`
-5. 如果生成配置里没有 `DB.database_id`，脚本会阻止部署，避免代码和远端 D1 schema 不匹配
+5. 如果 Wrangler 无法通过绑定名访问远端 D1，部署会失败；这时把 `CF_D1_DATABASE_NAME` 和 `CF_D1_DATABASE_ID` 加到 Build variables and secrets 后重试
 
 ## 14. Cloudflare Git 自动构建注意事项
 

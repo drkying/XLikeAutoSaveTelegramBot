@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
 import process from "node:process";
 
 const mode = process.argv.includes("--remote") ? "--remote" : "--local";
@@ -79,22 +78,7 @@ async function main() {
 }
 
 async function preflight() {
-  if (mode !== "--remote") {
-    return;
-  }
-
-  const generatedConfig = JSON.parse(await readFile(configPath, "utf8"));
-  const d1Config = generatedConfig.d1_databases?.find((binding) => binding.binding === "DB")
-    ?? generatedConfig.d1_databases?.[0];
-
-  if (!d1Config?.database_id) {
-    throw new Error(
-      [
-        "Cannot repair remote D1 schema because generated Wrangler config has no DB.database_id.",
-        "Set both CF_D1_DATABASE_NAME and CF_D1_DATABASE_ID, then run `npm run db:repair:remote` again.",
-      ].join("\n"),
-    );
-  }
+  return;
 }
 
 async function listColumns(table) {

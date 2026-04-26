@@ -72,8 +72,7 @@ npm run db:init:remote
 npm run db:repair:remote
 ```
 
-该脚本会先检查列是否存在，只补缺失列，并回填账号级 X 凭据。
-远端修复需要当前环境能访问 Cloudflare，并且生成配置里有 D1 `database_id`；如果 `npm run cf:config` 显示 `D1:auto`，请先设置 `CF_D1_DATABASE_NAME` 和 `CF_D1_DATABASE_ID`。
+该脚本会先检查列是否存在，只补缺失列，并回填账号级 X 凭据。远端修复需要当前环境能访问 Cloudflare；如果 Wrangler 无法通过绑定名 `DB` 找到远端库，再把 `CF_D1_DATABASE_NAME` 和 `CF_D1_DATABASE_ID` 加到 Cloudflare Git 的 Build variables and secrets。
 
 ## 本地开发
 
@@ -107,7 +106,7 @@ wrangler secret put WEBHOOK_SECRET
 npm run deploy
 ```
 
-- `npm run deploy` 现在会先执行 `npm run build`，再应用远程 D1 migration 和 schema repair，然后用 `wrangler deploy --keep-vars` 部署，部署后再兜底检查一次远程 migration/repair。部署环境必须提供 `CF_D1_DATABASE_NAME` 和 `CF_D1_DATABASE_ID`，否则会直接失败，避免上线后出现 `no such column`。
+- `npm run deploy` 现在会先执行 `npm run build`，再通过绑定名 `DB` 应用远程 D1 migration 和 schema repair，然后用 `wrangler deploy --keep-vars` 部署，部署后再兜底检查一次远程 migration/repair。如果 Wrangler 无法通过绑定名找到远端库，再把 `CF_D1_DATABASE_NAME` 和 `CF_D1_DATABASE_ID` 加到 Cloudflare Git 的 Build variables and secrets。
 - 如果你使用 Cloudflare Git 自动构建，`Settings > Build > Build variables and secrets` 与 Worker 运行时变量是两套东西。`CF_D1_DATABASE_NAME`、`CF_D1_DATABASE_ID`、`CF_KV_ID`、`CF_R2_BUCKET_NAME` 这类会参与生成 Wrangler 绑定配置的值，必须放到 Build variables 里，不能只放在 Worker 运行时变量里。
 - `APP_BASE_URL`、`TELEGRAM_API_BASE`、`R2_PUBLIC_DOMAIN`、`WORKERS_PAID_ENABLED` 如果只想继续沿用 Dashboard 当前运行时值，可以不放到 Build variables；如果你希望每次构建时由代码侧覆盖它们，也需要同步放到 Build variables。
 
