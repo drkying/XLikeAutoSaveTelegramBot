@@ -4,6 +4,10 @@
 # Required: Bot token from BotFather.
 TELEGRAM_BOT_TOKEN=__YOUR_TELEGRAM_BOT_TOKEN__
 
+# Optional: Telegram Bot API endpoint. Leave empty to use https://api.telegram.org.
+# Set to https://tgbotapi.drkying.com to use the self-hosted Bot API.
+TELEGRAM_API_BASE=
+
 # Optional: Telegram chat id for admin alerts.
 ADMIN_CHAT_ID=
 

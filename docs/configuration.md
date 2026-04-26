@@ -37,6 +37,7 @@
 | 名称 | 用途 | 例子 |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | Bot 发消息、接收 webhook | `123456:ABC...` |
+| `TELEGRAM_API_BASE` | Telegram Bot API 基地址，可选 | `https://tgbotapi.drkying.com` |
 | `ADMIN_CHAT_ID` | 接收告警 | `123456789` |
 | `WEBHOOK_SECRET` | 校验 Telegram webhook 请求 | 自定义随机字符串 |
 | `APP_BASE_URL` | OAuth 回调和 webhook 根地址 | `https://your-worker.example.workers.dev` |
@@ -99,7 +100,7 @@ npm run cf:config
 
 ### 运行时 `vars` 字段说明
 
-`WORKERS_PAID_ENABLED`、`R2_PUBLIC_DOMAIN`、`APP_BASE_URL` 不再在仓库模板里写死默认值。`npm run cf:config` 只会在这些值明确存在于 `.dev.vars`、`.env*`、shell / CI 环境变量时，把它们写进 `.wrangler/generated/wrangler.jsonc`。
+`WORKERS_PAID_ENABLED`、`R2_PUBLIC_DOMAIN`、`APP_BASE_URL`、`TELEGRAM_API_BASE` 不再在仓库模板里写死默认值。`npm run cf:config` 只会在这些值明确存在于 `.dev.vars`、`.env*`、shell / CI 环境变量时，把它们写进 `.wrangler/generated/wrangler.jsonc`。
 
 含义如下：
 
@@ -108,6 +109,7 @@ npm run cf:config
 | `WORKERS_PAID_ENABLED` | 否 | 仅作运行时标记；代码里未设置时会按 `false` 处理 |
 | `R2_PUBLIC_DOMAIN` | 否 | 配了以后媒体可生成公开 URL；不配也能上传，但链接字段可能为空 |
 | `APP_BASE_URL` | 是 | OAuth 回调基地址；本地开发和线上都必须在实际运行环境里提供 |
+| `TELEGRAM_API_BASE` | 否 | Telegram Bot API 基地址；未设置时使用官方 `https://api.telegram.org`，设置自建地址时媒体直发阈值按 2000MB 处理 |
 
 这些值会被 `npm run cf:config` 从环境变量写入生成配置；如果构建期没有提供，而线上 Dashboard 里已经有运行时变量，`keep_vars` 会让 `npm run deploy` 保留这些现有值，不会被模板默认值覆盖。
 
@@ -122,6 +124,7 @@ npm run cf:config
 
 ```dotenv
 TELEGRAM_BOT_TOKEN=__YOUR_TELEGRAM_BOT_TOKEN__
+TELEGRAM_API_BASE=
 ADMIN_CHAT_ID=
 WEBHOOK_SECRET=
 WORKERS_PAID_ENABLED=false
@@ -214,6 +217,7 @@ curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo"
 ```
 
 如果你不使用 `WEBHOOK_SECRET`，把 `secret_token` 参数删掉。
+如果你使用自建 Telegram Bot API，则把上面命令的 `api.telegram.org` 替换成 `tgbotapi.drkying.com`，并在 Worker 环境变量中设置 `TELEGRAM_API_BASE=https://tgbotapi.drkying.com`。
 
 ### Webhook 地址要求
 
@@ -321,10 +325,12 @@ npm run deploy
 会自动执行：
 
 1. `npm run build`
-2. `wrangler deploy --keep-vars --config .wrangler/generated/wrangler.jsonc`
-3. 如果生成配置里已经有 `DB.database_id`，再执行远程 D1 初始化：
+2. 如果生成配置里已经有 `DB.database_id`，先执行远程 D1 初始化：
    `wrangler d1 migrations apply DB --remote --config .wrangler/generated/wrangler.jsonc`
-4. 如果部署后生成配置里仍然没有 `database_id`，脚本会打印告警并跳过远程 migration，而不是直接让整次部署失败
+3. `wrangler deploy --keep-vars --config .wrangler/generated/wrangler.jsonc`
+4. 部署后再兜底检查一次远程 D1 初始化：
+   `wrangler d1 migrations apply DB --remote --config .wrangler/generated/wrangler.jsonc`
+5. 如果生成配置里仍然没有 `database_id`，脚本会打印告警并跳过远程 migration，而不是直接让整次部署失败
 
 ## 14. Cloudflare Git 自动构建注意事项
 
@@ -338,7 +344,7 @@ Cloudflare Workers Builds 里有两套变量来源：
 因此：
 
 - `CF_D1_DATABASE_NAME`、`CF_D1_DATABASE_ID`、`CF_KV_ID`、`CF_KV_PREVIEW_ID`、`CF_D1_PREVIEW_DATABASE_ID`、`CF_R2_BUCKET_NAME` 这种会影响 Wrangler 绑定生成的值，如果要在 Git 自动部署里复用已有资源，必须放到 Build variables and secrets。
-- `APP_BASE_URL`、`R2_PUBLIC_DOMAIN`、`WORKERS_PAID_ENABLED` 如果希望由构建时生成的 `wrangler` 配置主动覆盖线上值，也应放到 Build variables 里。
+- `APP_BASE_URL`、`TELEGRAM_API_BASE`、`R2_PUBLIC_DOMAIN`、`WORKERS_PAID_ENABLED` 如果希望由构建时生成的 `wrangler` 配置主动覆盖线上值，也应放到 Build variables 里。
 - 如果这些运行时 plain-text 变量只配置在 Worker Dashboard，而没有放到 Build variables，`npm run deploy` 会依赖 `--keep-vars` 保留它们的线上现值。
 - `TELEGRAM_BOT_TOKEN`、`WEBHOOK_SECRET`、`ADMIN_CHAT_ID` 仍然属于运行时 Secret / Variable，不需要为了 `npm run build` 重复配置到 Build variables，除非你的自定义构建脚本显式读取了它们。
 
@@ -348,6 +354,7 @@ Cloudflare Workers Builds 里有两套变量来源：
 
 - 需要复用已有资源时，`CF_*` 变量已经设置到 shell / CI / `.env*`，或者 Cloudflare Git 的 Build variables and secrets
 - `APP_BASE_URL` 已切到线上域名
+- `TELEGRAM_API_BASE` 已按需配置；未配置时会使用官方 `https://api.telegram.org`
 - D1 migration 已执行
 - `TELEGRAM_BOT_TOKEN` 已设置
 - `WEBHOOK_SECRET` 已设置或明确决定不用

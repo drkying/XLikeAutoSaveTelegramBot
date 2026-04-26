@@ -1,5 +1,6 @@
 import type { Env, MediaRecord, MediaStorageStatus } from "./types";
 import { logInfo, logWarn, serializeError } from "./observability";
+import { getTelegramMediaSizeLimitBytes } from "./telegram-config";
 
 type R2UploadBody =
   | string
@@ -27,8 +28,6 @@ export interface ProcessMediaItemOptions {
   onlyWhenExceedsTelegramLimit?: boolean;
   failureStatus?: MediaStorageStatus;
 }
-
-export const TELEGRAM_MEDIA_SIZE_LIMIT_BYTES = 50 * 1024 * 1024;
 
 export async function uploadToR2(
   env: Env,
@@ -93,20 +92,22 @@ export async function processMediaItem(
         mediaItem.file_size_bytes === undefined ||
         mediaItem.content_type === null ||
         mediaItem.content_type === undefined);
+    const telegramMediaSizeLimitBytes = getTelegramMediaSizeLimitBytes(env);
     const metadata = shouldProbeMetadata
-      ? await probeRemoteMediaMetadata(mediaItem.x_original_url, options.fetchInit)
+      ? await probeRemoteMediaMetadata(mediaItem.x_original_url, telegramMediaSizeLimitBytes, options.fetchInit)
       : {};
     const fileSize = mediaItem.file_size_bytes ?? metadata.contentLength;
     const contentType = metadata.contentType ?? mediaItem.content_type ?? inferContentType(mediaItem);
     const exceedsTelegramSizeLimit =
       !mediaItem.telegram_file_id &&
       (metadata.exceedsTelegramLimit === true ||
-        (typeof fileSize === "number" && fileSize > TELEGRAM_MEDIA_SIZE_LIMIT_BYTES));
+        (typeof fileSize === "number" && fileSize > telegramMediaSizeLimitBytes));
     logInfo("media.process.started", {
       tweet_id: mediaItem.tweet_id,
       media_key: mediaItem.media_key ?? null,
       media_type: mediaItem.media_type,
       file_size_bytes: fileSize ?? mediaItem.file_size_bytes ?? null,
+      telegram_media_size_limit_bytes: telegramMediaSizeLimitBytes,
       exceeds_telegram_size_limit: exceedsTelegramSizeLimit,
       only_when_exceeds_telegram_limit: options.onlyWhenExceedsTelegramLimit === true,
     });
@@ -247,6 +248,7 @@ async function fetchMediaWithRetry(
 
 async function probeRemoteMediaMetadata(
   url: string,
+  telegramMediaSizeLimitBytes: number,
   init?: RequestInit,
 ): Promise<{
   contentLength?: number;
@@ -257,7 +259,7 @@ async function probeRemoteMediaMetadata(
   if (headMetadata.contentLength !== undefined) {
     return {
       ...headMetadata,
-      exceedsTelegramLimit: headMetadata.contentLength > TELEGRAM_MEDIA_SIZE_LIMIT_BYTES,
+      exceedsTelegramLimit: headMetadata.contentLength > telegramMediaSizeLimitBytes,
     };
   }
 
@@ -265,11 +267,11 @@ async function probeRemoteMediaMetadata(
   if (rangeMetadata.contentLength !== undefined) {
     return {
       ...rangeMetadata,
-      exceedsTelegramLimit: rangeMetadata.contentLength > TELEGRAM_MEDIA_SIZE_LIMIT_BYTES,
+      exceedsTelegramLimit: rangeMetadata.contentLength > telegramMediaSizeLimitBytes,
     };
   }
 
-  return probeRemoteMediaStreamMetadata(url, init);
+  return probeRemoteMediaStreamMetadata(url, telegramMediaSizeLimitBytes, init);
 }
 
 async function probeRemoteMediaHeadMetadata(
@@ -326,6 +328,7 @@ async function probeRemoteMediaRangeMetadata(
 
 async function probeRemoteMediaStreamMetadata(
   url: string,
+  telegramMediaSizeLimitBytes: number,
   init?: RequestInit,
 ): Promise<{
   contentLength?: number;
@@ -340,7 +343,7 @@ async function probeRemoteMediaStreamMetadata(
       return {
         contentLength: headerLength,
         contentType,
-        exceedsTelegramLimit: headerLength > TELEGRAM_MEDIA_SIZE_LIMIT_BYTES,
+        exceedsTelegramLimit: headerLength > telegramMediaSizeLimitBytes,
       };
     }
 
@@ -349,7 +352,7 @@ async function probeRemoteMediaStreamMetadata(
       return {
         contentLength: buffer.byteLength,
         contentType,
-        exceedsTelegramLimit: buffer.byteLength > TELEGRAM_MEDIA_SIZE_LIMIT_BYTES,
+        exceedsTelegramLimit: buffer.byteLength > telegramMediaSizeLimitBytes,
       };
     }
 
@@ -365,7 +368,7 @@ async function probeRemoteMediaStreamMetadata(
       }
 
       totalBytes += value.byteLength;
-      if (totalBytes > TELEGRAM_MEDIA_SIZE_LIMIT_BYTES) {
+      if (totalBytes > telegramMediaSizeLimitBytes) {
         await cancelReader(reader);
         return {
           contentLength: totalBytes,

@@ -125,8 +125,8 @@
 ### 3.8 Telegram 发送（sender.ts）
 - [x] 纯文本推文：`sendMessage` with MarkdownV2
 - [x] 单图片：`sendPhoto` with caption
-- [x] 单视频 ≤50MB：`sendVideo` with caption
-- [x] 单视频 >50MB：ReadableStream 流式代理上传
+- [x] 单视频官方 ≤50MB / 自建 ≤2000MB：`sendVideo` with caption
+- [x] 单视频官方 >50MB / 自建 >2000MB：R2 fallback
 - [x] 多媒体：`sendMediaGroup` 相册模式
 - [x] GIF：`sendAnimation`
 - [x] 发送后提取并记录 file_id 到 D1

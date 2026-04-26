@@ -81,7 +81,8 @@ function applyRuntimeVarOverrides(config, envSource) {
   const managedVarNames = new Set([
     "WORKERS_PAID_ENABLED",
     "R2_PUBLIC_DOMAIN",
-    "APP_BASE_URL"
+    "APP_BASE_URL",
+    "TELEGRAM_API_BASE"
   ]);
   const runtimeVars = Object.fromEntries(
     Object.entries(config.vars ?? {}).filter(([key]) => !managedVarNames.has(key))
@@ -100,6 +101,11 @@ function applyRuntimeVarOverrides(config, envSource) {
   const appBaseUrl = readOptional(envSource, "APP_BASE_URL");
   if (appBaseUrl) {
     runtimeVars.APP_BASE_URL = appBaseUrl;
+  }
+
+  const telegramApiBase = readOptional(envSource, "TELEGRAM_API_BASE");
+  if (telegramApiBase) {
+    runtimeVars.TELEGRAM_API_BASE = telegramApiBase;
   }
 
   if (Object.keys(runtimeVars).length > 0) {

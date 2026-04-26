@@ -13,6 +13,7 @@
 | 变量 | 必填 | 用途 |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | 是 | Telegram Bot Token，本地命令、Webhook、消息发送都依赖它 |
+| `TELEGRAM_API_BASE` | 否 | Telegram Bot API 基地址；未设置时使用官方 `https://api.telegram.org`，设置为 `https://tgbotapi.drkying.com` 时使用自建接口 |
 | `ADMIN_CHAT_ID` | 否 | 接收运行错误和告警的 Telegram Chat ID |
 | `WEBHOOK_SECRET` | 否 | `/webhook` 会校验请求头 `X-Telegram-Bot-Api-Secret-Token` |
 | `WORKERS_PAID_ENABLED` | 否 | 付费方案状态标记，默认保持 `false` |
@@ -97,11 +98,11 @@ wrangler secret put WEBHOOK_SECRET
 npm run deploy
 ```
 
-- `npm run deploy` 现在会先执行 `npm run build`，再用 `wrangler deploy --keep-vars` 部署，最后只在生成配置里已经拿到 `database_id` 时才自动执行远程 D1 migration。
+- `npm run deploy` 现在会先执行 `npm run build`，在生成配置里已经拿到 `database_id` 时先应用远程 D1 migration，再用 `wrangler deploy --keep-vars` 部署，部署后再兜底检查一次远程 migration。
 - 如果你使用 Cloudflare Git 自动构建，`Settings > Build > Build variables and secrets` 与 Worker 运行时变量是两套东西。`CF_D1_DATABASE_NAME`、`CF_D1_DATABASE_ID`、`CF_KV_ID`、`CF_R2_BUCKET_NAME` 这类会参与生成 Wrangler 绑定配置的值，必须放到 Build variables 里，不能只放在 Worker 运行时变量里。
-- `APP_BASE_URL`、`R2_PUBLIC_DOMAIN`、`WORKERS_PAID_ENABLED` 如果只想继续沿用 Dashboard 当前运行时值，可以不放到 Build variables；如果你希望每次构建时由代码侧覆盖它们，也需要同步放到 Build variables。
+- `APP_BASE_URL`、`TELEGRAM_API_BASE`、`R2_PUBLIC_DOMAIN`、`WORKERS_PAID_ENABLED` 如果只想继续沿用 Dashboard 当前运行时值，可以不放到 Build variables；如果你希望每次构建时由代码侧覆盖它们，也需要同步放到 Build variables。
 
-部署后设置并校验 Telegram webhook；如果没有启用 `WEBHOOK_SECRET`，去掉 `secret_token` 参数：
+部署后设置并校验 Telegram webhook；如果没有启用 `WEBHOOK_SECRET`，去掉 `secret_token` 参数。未设置 `TELEGRAM_API_BASE` 时使用官方接口；使用自建接口时把命令里的域名改为 `tgbotapi.drkying.com`：
 
 ```bash
 curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<worker-domain>/webhook&secret_token=<WEBHOOK_SECRET>"

@@ -1,6 +1,6 @@
 import type { Env, MediaRecord } from "./types";
-import { TELEGRAM_MEDIA_SIZE_LIMIT_BYTES } from "./media-handler";
 import { logInfo, logWarn, serializeError } from "./observability";
+import { getTelegramApiBase, getTelegramMediaSizeLimitBytes } from "./telegram-config";
 
 interface TelegramApiResponse<T> {
   ok: boolean;
@@ -65,10 +65,8 @@ export class TelegramMediaSendError extends Error {
   }
 }
 
-const TELEGRAM_API_BASE = "https://api.telegram.org";
-
 function telegramApiUrl(env: Env, method: string): string {
-  return `${TELEGRAM_API_BASE}/bot${env.TELEGRAM_BOT_TOKEN}/${method}`;
+  return `${getTelegramApiBase(env)}/bot${env.TELEGRAM_BOT_TOKEN}/${method}`;
 }
 
 function wait(milliseconds: number): Promise<void> {
@@ -117,7 +115,7 @@ function extractFileId(message: TelegramMessage): string | null {
 }
 
 function buildTelegramFileUrl(env: Env, filePath: string): string {
-  return `${TELEGRAM_API_BASE}/file/bot${env.TELEGRAM_BOT_TOKEN}/${filePath}`;
+  return `${getTelegramApiBase(env)}/file/bot${env.TELEGRAM_BOT_TOKEN}/${filePath}`;
 }
 
 async function resolveTelegramFileMetadata(
@@ -240,7 +238,7 @@ export async function sendMediaRecord(
     !media.telegram_file_id &&
     media.file_size_bytes !== null &&
     media.file_size_bytes !== undefined &&
-    media.file_size_bytes > TELEGRAM_MEDIA_SIZE_LIMIT_BYTES
+    media.file_size_bytes > getTelegramMediaSizeLimitBytes(env)
   ) {
     throw new TelegramMediaSendError(
       media,

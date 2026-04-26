@@ -260,8 +260,8 @@ MarkdownV2 转义：`_ * [ ] ( ) ~ ` > # + - = | { } . !` 前加 `\`
 | 类型 | 处理 |
 |---|---|
 | 图片 | sendPhoto(url) → 记录 file_id + 上传 R2 |
-| 视频 ≤50MB | sendVideo(url) → 记录 file_id + 上传 R2 |
-| 视频 >50MB | ReadableStream 流式代理上传 TG，或上传 R2 发链接 |
+| 官方 Bot API 视频 ≤50MB / 自建 Bot API 视频 ≤2000MB | sendVideo(url) → 记录 file_id |
+| 官方 Bot API 视频 >50MB / 自建 Bot API 视频 >2000MB | 上传 R2 并发送替换后的媒体链接 |
 | 多媒体 | sendMediaGroup 相册模式 |
 | GIF | sendAnimation(url) |
 

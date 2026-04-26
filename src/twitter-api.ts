@@ -145,13 +145,12 @@ export function buildAuthUrl(
 export async function exchangeCodeForToken(
   options: ExchangeCodeForTokenOptions,
 ): Promise<XTokenResponse> {
-  const form = new URLSearchParams({
+  const form = buildTokenRequestForm({
     code: options.code,
     grant_type: "authorization_code",
     redirect_uri: options.redirectUri,
     code_verifier: options.codeVerifier,
-    client_id: options.clientId,
-  });
+  }, options);
 
   return requestToken(form, options, 2);
 }
@@ -159,11 +158,10 @@ export async function exchangeCodeForToken(
 export async function refreshAccessToken(
   options: RefreshAccessTokenOptions,
 ): Promise<XTokenResponse> {
-  const form = new URLSearchParams({
+  const form = buildTokenRequestForm({
     refresh_token: options.refreshToken,
     grant_type: "refresh_token",
-    client_id: options.clientId,
-  });
+  }, options);
 
   return requestToken(form, options, 2);
 }
@@ -171,22 +169,14 @@ export async function refreshAccessToken(
 export async function validateClientCredentials(
   options: TokenRequestOptions,
 ): Promise<void> {
-  const form = new URLSearchParams({
+  const form = buildTokenRequestForm({
     refresh_token: "credential_validation_probe",
     grant_type: "refresh_token",
-    client_id: options.clientId,
-  });
-  const headers = new Headers({
-    "content-type": "application/x-www-form-urlencoded",
-  });
-
-  if (options.clientSecret) {
-    headers.set("authorization", `Basic ${base64EncodeUtf8(`${options.clientId}:${options.clientSecret}`)}`);
-  }
+  }, options);
 
   const response = await fetch(X_TOKEN_ENDPOINT, {
     method: "POST",
-    headers,
+    headers: buildTokenRequestHeaders(options),
     body: form.toString(),
   });
 
@@ -282,19 +272,11 @@ async function requestToken(
   options: TokenRequestOptions,
   maxRetries: number,
 ): Promise<XTokenResponse> {
-  const headers = new Headers({
-    "content-type": "application/x-www-form-urlencoded",
-  });
-
-  if (options.clientSecret) {
-    headers.set("authorization", `Basic ${base64EncodeUtf8(`${options.clientId}:${options.clientSecret}`)}`);
-  }
-
   const response = await fetchWithRetry(
     X_TOKEN_ENDPOINT,
     {
       method: "POST",
-      headers,
+      headers: buildTokenRequestHeaders(options),
       body: form.toString(),
     },
     {
@@ -314,6 +296,29 @@ async function requestToken(
   }
 
   return payload;
+}
+
+function buildTokenRequestForm(
+  fields: Record<string, string>,
+  options: TokenRequestOptions,
+): URLSearchParams {
+  const form = new URLSearchParams(fields);
+  if (!options.clientSecret) {
+    form.set("client_id", options.clientId);
+  }
+  return form;
+}
+
+function buildTokenRequestHeaders(options: TokenRequestOptions): Headers {
+  const headers = new Headers({
+    "content-type": "application/x-www-form-urlencoded",
+  });
+
+  if (options.clientSecret) {
+    headers.set("authorization", `Basic ${base64EncodeUtf8(`${options.clientId}:${options.clientSecret}`)}`);
+  }
+
+  return headers;
 }
 
 async function fetchXApiJson<T>(
@@ -620,6 +625,11 @@ function extractErrorDetail(payload: unknown): string | null {
   const directDetail = payload.detail;
   if (typeof directDetail === "string" && directDetail) {
     return directDetail;
+  }
+
+  const errorDescription = payload.error_description;
+  if (typeof errorDescription === "string" && errorDescription) {
+    return errorDescription;
   }
 
   const directError = payload.error;

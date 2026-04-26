@@ -3,6 +3,7 @@ import { createDatabase } from "./db";
 import { resolveMenuAction, t } from "./i18n";
 import { logError, logInfo, serializeError } from "./observability";
 import { notifyAdmin } from "./sender";
+import { getTelegramApiBase } from "./telegram-config";
 import { registerAccountsCommand } from "./commands/accounts";
 import { handleAccountsCommand } from "./commands/accounts";
 import { registerCredentialsCommand } from "./commands/credentials";
@@ -37,7 +38,11 @@ export function getBot(env: Env): Bot {
     return botInstance;
   }
 
-  const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
+  const bot = new Bot(env.TELEGRAM_BOT_TOKEN, {
+    client: {
+      apiRoot: getTelegramApiBase(env),
+    },
+  });
   const deps = {
     env,
     db: createDatabase(env),

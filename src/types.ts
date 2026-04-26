@@ -6,6 +6,7 @@ export interface Env {
   DB: D1Database;
   R2: R2Bucket;
   TELEGRAM_BOT_TOKEN: string;
+  TELEGRAM_API_BASE?: string;
   ADMIN_CHAT_ID?: string;
   WEBHOOK_SECRET?: string;
   WORKERS_PAID_ENABLED?: string;
